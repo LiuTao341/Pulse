@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; media-src 'self' file:;" />
+  <title>Pulse</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div id="app">
+  <!-- 标题栏 + 一级导航 -->
+  <header class="titlebar">
+    <div class="logo" id="logo" data-icon="music"></div>
+    <nav class="nav" id="nav"></nav>
+    <div class="spacer"></div>
+    <div class="scan-ind" id="scan-ind"></div>
+    <label class="search"><i data-icon="search"></i><input id="search" placeholder="搜索歌曲、艺术家、专辑" spellcheck="false" /></label>
+    <button class="tb-btn" id="btn-settings" title="设置" data-icon="settings"></button>
+    <div class="win-btns">
+      <button class="tb-btn" id="win-min" title="最小化" data-icon="min"></button>
+      <button class="tb-btn" id="win-max" title="最大化" data-icon="max"></button>
+      <button class="tb-btn close" id="win-close" title="关闭" data-icon="close"></button>
+    </div>
+  </header>
+
+  <!-- 内容区 -->
+  <main id="view"></main>
+
+  <!-- 正在播放（全屏覆盖层） -->
+  <section class="npo" id="npo">
+    <div class="npo-bg" id="npo-bg"></div>
+    <button class="icon-btn npo-close" id="npo-close" title="收起 (Esc)" data-icon="down"></button>
+    <div class="npo-inner">
+      <div class="cover xl"><i data-icon="music"></i><img id="npo-img" alt="" /></div>
+      <div class="npo-right">
+        <div class="npo-title" id="npo-title">未在播放</div>
+        <div class="npo-sub" id="npo-sub"></div>
+        <div class="lyrics" id="lyrics"><div class="lrc-empty">暂无歌词</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 播放队列抽屉 -->
+  <aside class="queue" id="queue">
+    <div class="queue-head"><div>播放队列<small id="queue-count"></small></div><button class="icon-btn" id="queue-close" data-icon="close"></button></div>
+    <div id="queue-list"></div>
+  </aside>
+
+  <!-- 播放栏 -->
+  <footer class="player">
+    <div class="seek" id="seek"><div class="seek-fill" id="seek-fill"></div></div>
+    <div class="np" id="np-open" title="打开正在播放">
+      <div class="cover"><i data-icon="music"></i><img id="np-img" alt="" /></div>
+      <div class="np-text">
+        <div class="np-artist" id="np-artist"></div>
+        <div class="np-title" id="np-title">未在播放</div>
+      </div>
+    </div>
+    <div class="ctrls">
+      <button class="icon-btn" id="btn-repeat" title="循环：关" data-icon="repeat"></button>
+      <button class="icon-btn" id="btn-prev" title="上一首 (Ctrl+←)" data-icon="prev"></button>
+      <button class="icon-btn play-btn" id="btn-play" title="播放/暂停 (空格)" data-icon="play"></button>
+      <button class="icon-btn" id="btn-next" title="下一首 (Ctrl+→)" data-icon="next"></button>
+      <button class="icon-btn" id="btn-shuffle" title="随机播放" data-icon="shuffle"></button>
+    </div>
+    <div class="p-right">
+      <span class="time" id="time"><b>0:00</b> / 0:00</span>
+      <button class="icon-btn" id="btn-queue" title="播放队列" data-icon="queue"></button>
+      <button class="icon-btn" id="btn-mute" title="静音" data-icon="volume"></button>
+      <input type="range" id="vol" min="0" max="100" step="1" />
+    </div>
+  </footer>
+</div>
+
+<div class="menu" id="menu"></div>
+<div class="modal" id="modal"></div>
+<div class="toast" id="toast"></div>
+
+<script src="renderer.js"></script>
+</body>
+</html>

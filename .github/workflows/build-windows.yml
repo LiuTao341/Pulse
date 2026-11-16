@@ -1,0 +1,39 @@
+name: Build Windows exe
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install
+        run: npm install
+
+      - name: Build exe (portable + installer)
+        run: npm run dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pulse-windows-${{ github.run_number }}
+          path: release/*.exe
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Pulse build ${{ github.run_number }}
+          body: "自动构建 · commit ${{ github.sha }}\n\n- `*-portable.exe`：免安装，双击即用\n- `*-setup.exe`：安装版"
+          files: release/*.exe

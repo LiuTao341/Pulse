@@ -1,0 +1,47 @@
+{
+  "name": "pulse-player",
+  "productName": "Pulse",
+  "version": "0.1.0",
+  "description": "参考 Dopamine 的本地音乐播放器（Electron）",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable nsis --publish never"
+  },
+  "dependencies": {
+    "music-metadata": "^7.14.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "app.pulse.player",
+    "productName": "Pulse",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ],
+      "icon": "build/icon.png"
+    },
+    "portable": {
+      "artifactName": "Pulse-${version}-portable.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Pulse-${version}-setup.exe"
+    }
+  },
+  "author": "LiuTao341",
+  "repository": "https://github.com/LiuTao341/Pulse"
+}
