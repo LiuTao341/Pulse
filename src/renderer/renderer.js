@@ -60,7 +60,7 @@ const icon = (n, cls = '') =>
 // ═════════════════════════ 状态 ═════════════════════════
 const S = {
   folders: [], tracks: [], lib: [], byId: new Map(), blacklist: new Map(), playlists: [], settings: {},
-  view: 'artists', prevView: 'artists', settingsTab: 'library', sel: {}, search: '', songSort: 'title',
+  view: 'artists', prevView: 'artists', settingsTab: 'library', sel: {}, search: '',
   ctx: { tracks: [], playlistId: null }, redraw: null, scanning: false,
 };
 
@@ -91,7 +91,7 @@ const persist = {
 const saveSettingsSoon = debounce(persist.settings, 500);
 
 // ═════════════════════════ 导航 ═════════════════════════
-const VIEWS = [['artists', '艺术家'], ['genres', '风格'], ['albums', '专辑'], ['songs', '歌曲'], ['playlists', '播放列表'], ['folders', '文件夹']];
+const VIEWS = [['artists', '艺术家'], ['albums', '专辑'], ['playlists', '播放列表'], ['folders', '文件夹']];
 const SETTINGS_TABS = [['library', '音乐库'], ['appearance', '外观'], ['playback', '播放'], ['blacklist', '黑名单']];
 
 function renderNav() {
@@ -112,7 +112,7 @@ function render() {
   renderNav();
   S.redraw = null;
   const views = {
-    artists: () => viewGroup('artists'), genres: () => viewGroup('genres'), albums: viewAlbums, songs: viewSongs,
+    artists: viewArtists, albums: viewAlbums,
     playlists: viewPlaylists, folders: viewFolders, search: viewSearch, settings: viewSettings,
   };
   views[S.view]();
@@ -204,25 +204,24 @@ function emptyView() {
 }
 
 // ═════════════════════════ 视图 ═════════════════════════
-function viewGroup(kind) {
+function viewArtists() {
   if (!S.lib.length) return emptyView();
-  const fn = kind === 'artists' ? (t) => t.artists : (t) => (t.genres.length ? t.genres : ['未知风格']);
-  const g = groupBy(S.lib, fn);
+  const g = groupBy(S.lib, (t) => t.artists);
   const keys = [...g.keys()].sort(collator.compare);
-  if (!g.has(S.sel[kind])) S.sel[kind] = keys[0];
-  split(kind === 'artists' ? `艺术家<span class="muted">${keys.length}</span>` : `风格<span class="muted">${keys.length}</span>`);
+  if (!g.has(S.sel.artist)) S.sel.artist = keys[0];
+  split(`艺术家<span class="muted">${keys.length}</span>`);
   const left = $('#left');
-  left.innerHTML = keys.map((k) => `<div class="li${k === S.sel[kind] ? ' active' : ''}" data-k="${esc(k)}"><span>${esc(k)}</span><em>${g.get(k).length}</em></div>`).join('');
+  left.innerHTML = keys.map((k) => `<div class="li${k === S.sel.artist ? ' active' : ''}" data-k="${esc(k)}"><span>${esc(k)}</span><em>${g.get(k).length}</em></div>`).join('');
   left.onclick = (e) => {
     const li = e.target.closest('.li');
     if (!li) return;
-    S.sel[kind] = li.dataset.k;
+    S.sel.artist = li.dataset.k;
     left.querySelector('.active')?.classList.remove('active');
     li.classList.add('active');
     showTracks(g.get(li.dataset.k), { grouped: true, title: li.dataset.k });
   };
   left.querySelector('.active')?.scrollIntoView({ block: 'center' });
-  showTracks(g.get(S.sel[kind]), { grouped: true, title: S.sel[kind] });
+  showTracks(g.get(S.sel.artist), { grouped: true, title: S.sel.artist });
 }
 
 function albumList() {
@@ -267,22 +266,6 @@ function viewAlbumDetail(a) {
   observeCovers($('#view'));
   $('#album-back').onclick = () => { S.sel.album = null; render(); };
   showTracks(a.tracks);
-}
-
-const SORTS = {
-  title: ['标题', (a, b) => collator.compare(a.title, b.title)],
-  artist: ['艺术家', (a, b) => collator.compare(artistOf(a), artistOf(b)) || collator.compare(a.title, b.title)],
-  album: ['专辑', (a, b) => collator.compare(a.album, b.album) || byAlbumOrder(a, b)],
-  duration: ['时长', (a, b) => a.duration - b.duration],
-  added: ['最近添加', (a, b) => b.addedAt - a.addedAt],
-  plays: ['最常播放', (a, b) => (b.playCount || 0) - (a.playCount || 0)],
-};
-function viewSongs() {
-  if (!S.lib.length) return emptyView();
-  single();
-  const sel = `<select id="sort" title="排序">${Object.entries(SORTS).map(([k, [l]]) => `<option value="${k}"${k === S.songSort ? ' selected' : ''}>按${l}</option>`).join('')}</select>`;
-  showTracks(S.lib.slice().sort(SORTS[S.songSort][1]), { extraHead: sel });
-  $('#sort').onchange = (e) => { S.songSort = e.target.value; viewSongs(); };
 }
 
 function viewSearch() {
