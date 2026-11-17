@@ -59,9 +59,9 @@ const icon = (n, cls = '') =>
 
 // ═════════════════════════ 状态 ═════════════════════════
 const S = {
-  folders: [], tracks: [], lib: [], byId: new Map(), blacklist: new Map(), playlists: [], settings: {},
+  folders: [], tracks: [], lib: [], byId: new Map(), blacklist: new Map(), settings: {},
   view: 'artists', prevView: 'artists', settingsTab: 'library', sel: {}, search: '',
-  ctx: { tracks: [], playlistId: null }, redraw: null, scanning: false,
+  ctx: { tracks: [] }, redraw: null, scanning: false,
 };
 
 const artistOf = (t) => t.artists.join(' / ');
@@ -74,7 +74,6 @@ function applyData(d) {
   S.folders = d.folders || [];
   S.tracks = d.tracks || [];
   S.blacklist = new Map((d.blacklist || []).map((b) => [b.path, b]));
-  S.playlists = d.playlists || [];
   S.settings = d.settings || {};
   rebuild();
 }
@@ -85,13 +84,12 @@ function rebuild() {
 }
 const persist = {
   settings: () => api.patch({ settings: S.settings }),
-  playlists: () => api.patch({ playlists: S.playlists }),
   blacklist: () => api.patch({ blacklist: [...S.blacklist.values()] }),
 };
 const saveSettingsSoon = debounce(persist.settings, 500);
 
 // ═════════════════════════ 导航 ═════════════════════════
-const VIEWS = [['artists', '艺术家'], ['albums', '专辑'], ['playlists', '播放列表'], ['folders', '文件夹']];
+const VIEWS = [['artists', '艺术家'], ['albums', '专辑'], ['folders', '文件夹']];
 const SETTINGS_TABS = [['library', '音乐库'], ['appearance', '外观'], ['playback', '播放'], ['blacklist', '黑名单']];
 
 function renderNav() {
@@ -113,7 +111,7 @@ function render() {
   S.redraw = null;
   const views = {
     artists: viewArtists, albums: viewAlbums,
-    playlists: viewPlaylists, folders: viewFolders, search: viewSearch, settings: viewSettings,
+    folders: viewFolders, search: viewSearch, settings: viewSettings,
   };
   views[S.view]();
 }
@@ -173,7 +171,7 @@ function headHtml(title, tracks, extra = '') {
       <button class="btn" data-act="playall">${icon('play')}播放全部</button></div>`;
 }
 /** 在 #rhead / #list / #rfoot 中显示歌曲列表 */
-function showTracks(tracks, { grouped = false, playlistId = null, title = '', extraHead = '' } = {}) {
+function showTracks(tracks, { grouped = false, title = '', extraHead = '' } = {}) {
   const items = [];
   if (grouped) {
     const g = [...groupBy(tracks, albumKey).values()].sort((a, b) => (a[0].year || 0) - (b[0].year || 0) || collator.compare(a[0].album, b[0].album));
@@ -184,7 +182,7 @@ function showTracks(tracks, { grouped = false, playlistId = null, title = '', ex
     }
   } else items.push(...tracks);
   const ordered = items.filter((x) => x.h === undefined);
-  S.ctx = { tracks: ordered, playlistId };
+  S.ctx = { tracks: ordered };
   if ($('#rhead')) $('#rhead').innerHTML = headHtml(title, ordered, extraHead);
   if ($('#rfoot')) $('#rfoot').innerHTML = `<span>${fmtSize(sum(ordered, (t) => t.size))}</span><span>${fmtTotal(sum(ordered, (t) => t.duration))}</span>`;
   mountList($('#list'), items, ordered);
@@ -274,45 +272,6 @@ function viewSearch() {
   single();
   showTracks(hits, { title: `搜索：${S.search}` });
   if (!hits.length) $('#list').innerHTML = `<div class="hint">没有找到与「${esc(S.search)}」相关的歌曲</div>`;
-}
-
-function viewPlaylists() {
-  split(`<span>播放列表</span><button class="link" id="pl-new">${icon('plus')}新建</button>`);
-  $('#pl-new').onclick = async () => {
-    const n = await askText('新建播放列表', '');
-    if (n) { S.sel.pl = createPlaylist(n).id; viewPlaylists(); }
-  };
-  const left = $('#left');
-  if (!S.playlists.length) {
-    left.innerHTML = '<div class="hint">还没有播放列表</div>';
-    $('#list').innerHTML = '<div class="hint">在任意歌曲上点击右键 → 添加到播放列表</div>';
-    return;
-  }
-  if (!S.playlists.find((p) => p.id === S.sel.pl)) S.sel.pl = S.playlists[0].id;
-  left.innerHTML = S.playlists.map((p) => `<div class="li${p.id === S.sel.pl ? ' active' : ''}" data-id="${p.id}"><span>${esc(p.name)}</span><em>${p.tracks.length}</em></div>`).join('');
-  left.onclick = (e) => {
-    const li = e.target.closest('.li');
-    if (li) { S.sel.pl = li.dataset.id; viewPlaylists(); }
-  };
-  left.oncontextmenu = (e) => {
-    const li = e.target.closest('.li');
-    if (!li) return;
-    e.preventDefault();
-    const p = S.playlists.find((x) => x.id === li.dataset.id);
-    const tracks = () => p.tracks.map((id) => S.byId.get(id)).filter(Boolean);
-    showMenu(e.clientX, e.clientY, [
-      { label: '播放', action: () => playList(tracks(), 0) },
-      { label: '随机播放', action: () => playList(tracks(), 0, true) },
-      '-',
-      { label: '重命名…', action: async () => { const n = await askText('重命名播放列表', p.name); if (n) { p.name = n; persist.playlists(); viewPlaylists(); } } },
-      { label: '删除播放列表', danger: true, action: async () => {
-        if (await askConfirm(`删除播放列表「${p.name}」？歌曲文件不会被删除。`)) {
-          S.playlists = S.playlists.filter((x) => x !== p); persist.playlists(); viewPlaylists();
-        } } },
-    ]);
-  };
-  const p = S.playlists.find((x) => x.id === S.sel.pl);
-  showTracks(p.tracks.map((id) => S.byId.get(id)).filter(Boolean), { playlistId: p.id, title: p.name });
 }
 
 function viewFolders() {
@@ -458,29 +417,7 @@ async function doScan() {
   }
 }
 
-// ═════════════════════════ 播放列表 / 黑名单 ═════════════════════════
-function createPlaylist(name) {
-  const p = { id: 'pl_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, tracks: [] };
-  S.playlists.push(p);
-  persist.playlists();
-  return p;
-}
-function addToPlaylist(id, ids) {
-  const p = S.playlists.find((x) => x.id === id);
-  if (!p) return;
-  let n = 0;
-  for (const x of ids) if (!p.tracks.includes(x)) { p.tracks.push(x); n++; }
-  persist.playlists();
-  toast(n ? `已添加到「${p.name}」` : '歌曲已在该播放列表中');
-  if (S.view === 'playlists') viewPlaylists();
-}
-function removeFromPlaylist(id, tid) {
-  const p = S.playlists.find((x) => x.id === id);
-  if (!p) return;
-  p.tracks = p.tracks.filter((x) => x !== tid);
-  persist.playlists();
-  viewPlaylists();
-}
+// ═════════════════════════ 黑名单 ═════════════════════════
 function setBlack(t, on) {
   if (on) S.blacklist.set(t.path, { path: t.path, title: t.title, artist: artistOf(t) });
   else S.blacklist.delete(t.path);
@@ -499,16 +436,9 @@ function trackMenu(x, y, t) {
     { label: '下一首播放', action: () => playNext(t) },
     { label: '添加到播放队列', action: () => enqueue(t) },
     '-',
-    ...S.playlists.map((p) => ({ label: `添加到「${p.name}」`, action: () => addToPlaylist(p.id, [t.id]) })),
-    { label: '新建播放列表并添加…', action: async () => {
-      const n = await askText('新建播放列表', '');
-      if (n) addToPlaylist(createPlaylist(n).id, [t.id]);
-    } },
-    '-',
-    ctx.playlistId ? { label: '从播放列表移除', action: () => removeFromPlaylist(ctx.playlistId, t.id) } : null,
     isBlack(t) ? { label: '移出黑名单', action: () => setBlack(t, false) } : { label: '加入黑名单', danger: true, action: () => setBlack(t, true) },
     { label: '在文件夹中显示', action: () => api.showInFolder(t.path) },
-  ].filter(Boolean);
+  ];
   showMenu(x, y, items);
 }
 function showMenu(x, y, items) {
@@ -540,14 +470,6 @@ function openDialog(inner, onKey) {
     m.onmousedown = (e) => { if (e.target === m) done(null); };
     m.onclick = (e) => { const b = e.target.closest('[data-r]'); if (b) done(b.dataset.r === '1' ? onKey() : null); };
   });
-}
-async function askText(title, value) {
-  const p = openDialog(`<h3>${esc(title)}</h3><input id="dlg-in" value="${esc(value)}" spellcheck="false" placeholder="输入名称">
-    <div class="dlg-btns"><button class="btn ghost" data-r="0">取消</button><button class="btn" data-r="1">确认</button></div>`,
-  () => $('#dlg-in').value.trim() || null);
-  $('#dlg-in').focus();
-  $('#dlg-in').select();
-  return p;
 }
 async function askConfirm(text) {
   const r = await openDialog(`<h3>${esc(text)}</h3><div class="dlg-btns"><button class="btn ghost" data-r="0">取消</button><button class="btn" data-r="1">确认</button></div>`, () => true);
