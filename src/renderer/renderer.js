@@ -1,6 +1,7 @@
 'use strict';
-/* global MediaMetadata */
-const api = window.api;
+/* global MediaMetadata, api */
+// 注意：不要写 `const api = window.api`。
+// contextBridge 把 window.api 定义为不可配置的全局属性，同名的顶层 const 会让整个脚本抛 SyntaxError 而不执行。
 
 // ═════════════════════════ 工具 ═════════════════════════
 const $ = (s, el = document) => el.querySelector(s);

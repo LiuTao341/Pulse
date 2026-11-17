@@ -76,7 +76,8 @@
       lastSession: { base: tracks.map((t) => t.id), queue: tracks.map((t) => t.id), pos: 5, time: 0 } },
   };
 
-  window.api = {
+  // 与 Electron contextBridge 行为一致：不可配置、不可写的全局属性
+  Object.defineProperty(window, 'api', { configurable: false, writable: false, enumerable: true, value: {
     minimize() {}, toggleMax() {}, close() {},
     getLibrary: async () => data,
     scan: async () => data.tracks,
@@ -87,5 +88,5 @@
     getCover: async (p, size) => fakeCover(tracks.find((t) => t.path === p)?.album || p, Math.min(size || 300, 400)),
     getLyrics: async () => lrc,
     showInFolder() {}, played() {}, on() {},
-  };
+  } });
 })();
