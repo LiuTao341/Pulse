@@ -9,14 +9,24 @@
 </head>
 <body>
 <div id="app">
-  <!-- 标题栏 + 一级导航 -->
-  <header class="titlebar" data-tauri-drag-region>
-    <div class="logo" id="logo" data-icon="music"></div>
-    <nav class="nav" id="nav"></nav>
+  <!-- 随当前封面变化的模糊背景 -->
+  <div class="backdrop" aria-hidden="true"><div class="bd-img" id="bd-img"></div><div class="bd-shade"></div></div>
+
+  <!-- 左侧图标导航 -->
+  <nav class="rail" data-tauri-drag-region aria-label="主导航">
+    <div class="logo" data-icon="music" data-tauri-drag-region></div>
+    <div class="rail-nav" id="nav"></div>
+    <div class="spacer" data-tauri-drag-region></div>
+    <button class="rail-btn" id="btn-settings" title="设置"><i data-icon="gear"></i><span>设置</span></button>
+  </nav>
+
+  <!-- 顶栏：二级导航 / 搜索 / 窗口按钮 -->
+  <header class="topbar" data-tauri-drag-region>
+    <div class="subnav" id="subnav"></div>
     <div class="spacer" data-tauri-drag-region></div>
     <div class="scan-ind" id="scan-ind"></div>
+    <button class="update-pill" id="update-pill" hidden></button>
     <label class="search"><i data-icon="search"></i><input id="search" placeholder="搜索歌曲、艺术家、专辑" spellcheck="false" /></label>
-    <button class="tb-btn" id="btn-settings" title="设置" data-icon="settings"></button>
     <div class="win-btns">
       <button class="tb-btn" id="win-min" title="最小化" data-icon="min"></button>
       <button class="tb-btn" id="win-max" title="最大化" data-icon="max"></button>
@@ -34,6 +44,7 @@
     <div class="npo-inner">
       <div class="cover xl"><i data-icon="music"></i><img id="npo-img" alt="" /></div>
       <div class="npo-right">
+        <div class="kicker">正在播放</div>
         <div class="npo-title" id="npo-title">未在播放</div>
         <div class="npo-sub" id="npo-sub"></div>
         <div class="lyrics" id="lyrics"><div class="lrc-empty">暂无歌词</div></div>

@@ -41,10 +41,14 @@
       showInFolder: (path) => invoke('show_in_folder', { path }),
       played: (id) => invoke('track_played', { id }),
       setTrayTooltip: (text) => invoke('set_tray_tooltip', { text }),
+      version: () => T.app.getVersion(),
+      updateCheck: () => invoke('update_check'),
+      updateInstall: (url) => invoke('update_install', { url }),
 
       on: (ch, fn) => {
         if (ch === 'scan:progress') T.event.listen('scan-progress', (e) => fn(e.payload));
         else if (ch === 'tray') T.event.listen('tray-action', (e) => fn(e.payload));
+        else if (ch === 'update:progress') T.event.listen('update-progress', (e) => fn(e.payload));
         else if (ch === 'win:state') {
           const upd = async () => fn({ maximized: await win.isMaximized() });
           win.onResized(upd);

@@ -22,6 +22,8 @@ npm run build      # 打包（exe 在 src-tauri/target/release/）
 - `Pulse-x.y.z-portable.exe`：免安装，双击即用
 - `Pulse-x.y.z-setup.exe`：安装版
 
+**应用内更新：** 程序启动后会检查 Releases，有新版本时顶栏出现「更新并重启」，点一下即可下载、替换当前 exe 并自动重启（设置 → 关于 里也能手动检查）。发布新版本时记得提升 `package.json` 里的 `version`，否则不会被识别为更新。
+
 在本机打包：双击 `scripts\build-win.bat`，完成后会自动打开 `release\` 文件夹。
 
 **只想看界面？** 直接用浏览器打开 `preview/index.html`（内置模拟数据，不需要 Electron）。
@@ -37,6 +39,8 @@ npm run build      # 打包（exe 在 src-tauri/target/release/）
 - 正在播放页：模糊封面背景 + 大封面 + 滚动歌词（同名 .lrc 或内嵌歌词，支持 GBK，点击跳转）
 - 封面：内嵌封面优先，回退到目录下的 cover/folder.jpg；主进程缩放后缓存
 - 无缝播放 / 交叉淡入淡出（0–12 秒可调），对数音量
+- 方案 B「封面沉浸」界面：左侧图标导航、背景跟随当前封面、毛玻璃面板
+- 应用内更新：检测 GitHub 新版本，一键下载替换并重启
 - 关闭窗口缩到系统托盘（托盘菜单：播放/暂停、上一首、下一首、退出）
 - 系统媒体键 / Windows 媒体浮层（MediaSession）
 - 记忆：音量、循环/随机模式、主题色、上次播放队列和进度、播放次数

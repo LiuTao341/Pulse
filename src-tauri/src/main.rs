@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::{Read, Write};
+use std::time::Duration;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -19,6 +21,7 @@ use tauri_plugin_dialog::DialogExt;
 use walkdir::WalkDir;
 
 const AUDIO_EXT: &[&str] = &["mp3", "flac", "wav", "ogg", "oga", "opus", "m4a", "aac", "webm"];
+const REPO: &str = "LiuTao341/Pulse";
 const COVER_NAMES: &[&str] = &["cover", "folder", "front", "album", "albumart"];
 
 // ───────────────────────── 数据结构 ─────────────────────────
@@ -462,6 +465,120 @@ fn app_exit(app: AppHandle) {
     app.exit(0);
 }
 
+// ───────────────────────── 应用内更新 ─────────────────────────
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateInfo {
+    current: String,
+    latest: String,
+    available: bool,
+    url: String,
+    notes: String,
+    size: u64,
+}
+
+fn parse_ver(s: &str) -> Vec<u64> {
+    s.split(|c: char| !c.is_ascii_digit()).filter(|x| !x.is_empty()).take(3).map(|x| x.parse().unwrap_or(0)).collect()
+}
+
+/// 读取 GitHub 最新 Release，找到 *-portable.exe 并比较版本号
+#[tauri::command]
+async fn update_check(app: AppHandle) -> Result<UpdateInfo, String> {
+    let current = app.package_info().version.to_string();
+    tauri::async_runtime::spawn_blocking(move || -> Result<UpdateInfo, String> {
+        let v: Value = ureq::get(&format!("https://api.github.com/repos/{}/releases/latest", REPO))
+            .set("User-Agent", "Pulse-updater")
+            .set("Accept", "application/vnd.github+json")
+            .timeout(Duration::from_secs(15))
+            .call()
+            .map_err(|e| format!("无法连接 GitHub：{}", e))?
+            .into_json()
+            .map_err(|e| e.to_string())?;
+        let asset = v["assets"]
+            .as_array()
+            .and_then(|a| a.iter().find(|x| x["name"].as_str().map(|n| n.ends_with("-portable.exe")).unwrap_or(false)))
+            .ok_or("最新版本里没有找到 portable.exe")?;
+        let name = asset["name"].as_str().unwrap_or("");
+        let latest = name.trim_start_matches("Pulse-").trim_end_matches("-portable.exe").to_string();
+        Ok(UpdateInfo {
+            available: parse_ver(&latest) > parse_ver(&current),
+            current,
+            latest,
+            url: asset["browser_download_url"].as_str().unwrap_or("").to_string(),
+            notes: v["body"].as_str().unwrap_or("").to_string(),
+            size: asset["size"].as_u64().unwrap_or(0),
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 下载新版本到程序所在文件夹，退出后由一个隐藏的 PowerShell 进程替换当前 exe 并重新启动
+#[tauri::command]
+async fn update_install(app: AppHandle, url: String) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let dir = exe.parent().ok_or("找不到程序所在文件夹")?.to_path_buf();
+    let tmp = dir.join("Pulse.update.tmp");
+    let h = app.clone();
+    let tmp2 = tmp.clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let resp = ureq::get(&url).set("User-Agent", "Pulse-updater").call().map_err(|e| format!("下载失败：{}", e))?;
+        let total: u64 = resp.header("Content-Length").and_then(|v| v.parse().ok()).unwrap_or(0);
+        let mut r = resp.into_reader();
+        let mut f = fs::File::create(&tmp2).map_err(|e| format!("无法写入程序所在文件夹（{}）：{}", dir.display(), e))?;
+        let mut buf = vec![0u8; 64 * 1024];
+        let (mut done, mut last) = (0u64, 0u64);
+        loop {
+            let n = r.read(&mut buf).map_err(|e| format!("下载中断：{}", e))?;
+            if n == 0 {
+                break;
+            }
+            f.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+            done += n as u64;
+            if done - last > 256 * 1024 {
+                last = done;
+                let _ = h.emit("update-progress", json!({ "done": done, "total": total }));
+            }
+        }
+        f.flush().map_err(|e| e.to_string())?;
+        drop(f);
+        let _ = h.emit("update-progress", json!({ "done": done, "total": total }));
+        let head = fs::read(&tmp2).map_err(|e| e.to_string())?;
+        if (total > 0 && done != total) || !head.starts_with(b"MZ") {
+            let _ = fs::remove_file(&tmp2);
+            return Err("下载的文件不完整，已放弃更新".into());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let q = |p: &Path| p.to_string_lossy().replace('\'', "''");
+        let script = format!(
+            "Wait-Process -Id {pid} -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 300; \
+             $ok = $false; for ($i = 0; $i -lt 30 -and -not $ok; $i++) {{ \
+               try {{ Move-Item -LiteralPath '{tmp}' -Destination '{exe}' -Force -ErrorAction Stop; $ok = $true }} \
+               catch {{ Start-Sleep -Milliseconds 300 }} }}; \
+             Start-Process -FilePath '{exe}'",
+            pid = std::process::id(),
+            tmp = q(&tmp),
+            exe = q(&exe)
+        );
+        let utf16: Vec<u8> = script.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        let enc = base64::engine::general_purpose::STANDARD.encode(utf16);
+        std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-EncodedCommand", &enc])
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .spawn()
+            .map_err(|e| format!("无法启动更新程序：{}", e))?;
+    }
+    app.exit(0);
+    Ok(())
+}
+
 // ───────────────────────── 托盘 / 窗口 ─────────────────────────
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -561,7 +678,9 @@ fn main() {
             show_in_folder,
             track_played,
             set_tray_tooltip,
-            app_exit
+            app_exit,
+            update_check,
+            update_install
         ])
         .run(tauri::generate_context!())
         .expect("Pulse 启动失败");

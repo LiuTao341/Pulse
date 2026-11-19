@@ -18,6 +18,12 @@ const sum = (list, fn) => list.reduce((a, t) => a + (fn(t) || 0), 0);
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const sepOf = (p) => (p.includes('\\') ? '\\' : '/');
 const baseName = (p) => p.split(/[\\/]/).filter(Boolean).pop() || p;
+/** 只滚动 box 自身，把 el 移到中间（scrollIntoView 会连带滚动外层容器，导致整个窗口错位） */
+function centerIn(box, el, smooth = false) {
+  if (!box || !el) return;
+  const top = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - box.clientHeight / 2 + el.offsetHeight / 2;
+  box.scrollTo({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' });
+}
 function groupBy(list, fn) {
   const m = new Map();
   for (const t of list) for (const k of [].concat(fn(t))) { if (!m.has(k)) m.set(k, []); m.get(k).push(t); }
@@ -53,6 +59,9 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   folder: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z"/>',
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>',
+  artist: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>',
+  album: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="12" r="3.5"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
 };
 const icon = (n, cls = '') =>
   `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[n] || ''}</svg>`;
@@ -90,15 +99,16 @@ const saveSettingsSoon = debounce(persist.settings, 500);
 
 // ═════════════════════════ 导航 ═════════════════════════
 const VIEWS = [['artists', '艺术家'], ['albums', '专辑'], ['folders', '文件夹']];
-const SETTINGS_TABS = [['library', '音乐库'], ['appearance', '外观'], ['playback', '播放'], ['blacklist', '黑名单']];
+const SETTINGS_TABS = [['library', '音乐库'], ['appearance', '外观'], ['playback', '播放'], ['blacklist', '黑名单'], ['about', '关于']];
 
+const NAV_ICONS = { artists: 'artist', albums: 'album', folders: 'folder' };
 function renderNav() {
-  const inSettings = S.view === 'settings';
-  $('#logo').classList.toggle('hidden', inSettings);
-  $('#nav').innerHTML = inSettings
-    ? `<button class="back" data-back title="返回">${icon('back')}</button>` +
-      SETTINGS_TABS.map(([k, l]) => `<button data-stab="${k}" class="${S.settingsTab === k ? 'active' : ''}">${l}</button>`).join('')
-    : VIEWS.map(([k, l]) => `<button data-view="${k}" class="${S.view === k ? 'active' : ''}">${l}</button>`).join('');
+  $('#nav').innerHTML = VIEWS.map(([k, l]) =>
+    `<button class="rail-btn${S.view === k ? ' active' : ''}" data-view="${k}">${icon(NAV_ICONS[k])}<span>${l}</span></button>`).join('');
+  $('#btn-settings').classList.toggle('active', S.view === 'settings');
+  $('#subnav').innerHTML = S.view === 'settings'
+    ? SETTINGS_TABS.map(([k, l]) => `<button class="tab${S.settingsTab === k ? ' active' : ''}" data-stab="${k}">${l}</button>`).join('')
+    : S.view === 'search' ? '<span class="crumb">搜索结果</span>' : '';
 }
 function go(v) {
   if (v === 'settings' && S.view !== 'settings' && S.view !== 'search') S.prevView = S.view;
@@ -128,14 +138,16 @@ function rowHtml(it, i, grouped) {
     <div class="c-album">${esc(it.album)}</div>
     <div class="c-dur">${fmtTime(it.duration)}</div></div>`;
 }
-function mountList(host, items, ordered) {
+function mountList(host, items, ordered, header = '') {
   const grouped = items.length !== ordered.length;
-  host.innerHTML = `<div class="vspacer" style="height:${items.length * ROW}px"><div class="vlayer"></div></div>`;
+  host.scrollTop = 0;
+  host.innerHTML = `<div class="vhead">${header}</div><div class="vspacer" style="height:${items.length * ROW}px"><div class="vlayer"></div></div>`;
   const layer = host.querySelector('.vlayer');
+  const head = host.querySelector('.vhead');
   const indexOf = new Map(ordered.map((t, i) => [t, i]));
   let selected = -1;
   const draw = () => {
-    const start = Math.max(0, Math.floor(host.scrollTop / ROW) - 6);
+    const start = Math.max(0, Math.floor(Math.max(0, host.scrollTop - head.offsetHeight) / ROW) - 6);
     const end = Math.min(items.length, start + Math.ceil((host.clientHeight || 800) / ROW) + 12);
     layer.style.transform = `translateY(${start * ROW}px)`;
     let html = '';
@@ -171,7 +183,7 @@ function headHtml(title, tracks, extra = '') {
       <button class="btn" data-act="playall">${icon('play')}播放全部</button></div>`;
 }
 /** 在 #rhead / #list / #rfoot 中显示歌曲列表 */
-function showTracks(tracks, { grouped = false, title = '', extraHead = '' } = {}) {
+function showTracks(tracks, { grouped = false, title = '', extraHead = '', header = '' } = {}) {
   const items = [];
   if (grouped) {
     const g = [...groupBy(tracks, albumKey).values()].sort((a, b) => (a[0].year || 0) - (b[0].year || 0) || collator.compare(a[0].album, b[0].album));
@@ -185,11 +197,11 @@ function showTracks(tracks, { grouped = false, title = '', extraHead = '' } = {}
   S.ctx = { tracks: ordered };
   if ($('#rhead')) $('#rhead').innerHTML = headHtml(title, ordered, extraHead);
   if ($('#rfoot')) $('#rfoot').innerHTML = `<span>${fmtSize(sum(ordered, (t) => t.size))}</span><span>${fmtTotal(sum(ordered, (t) => t.duration))}</span>`;
-  mountList($('#list'), items, ordered);
+  mountList($('#list'), items, ordered, header);
 }
 function split(leftHead) {
   $('#view').innerHTML = `<div class="split">
-    <section class="pane-left"><div class="pane-head">${leftHead}</div><div class="pane-list" id="left"></div></section>
+    <section class="pane-left glass"><div class="pane-head">${leftHead}</div><div class="pane-list" id="left"></div></section>
     <section class="pane-right"><div class="pane-head" id="rhead"></div><div class="vlist" id="list"></div><div class="pane-foot" id="rfoot"></div></section></div>`;
 }
 function single() {
@@ -202,12 +214,19 @@ function emptyView() {
 }
 
 // ═════════════════════════ 视图 ═════════════════════════
+function albumsOf(tracks) {
+  return [...groupBy(tracks, albumKey).values()]
+    .map((list) => { list.sort(byAlbumOrder); const t = list[0]; return { key: albumKey(t), title: t.album, artist: albumArtistOf(t), year: t.year, tracks: list, cover: t.path }; })
+    .sort((a, b) => (b.year || 0) - (a.year || 0) || collator.compare(a.title, b.title));
+}
 function viewArtists() {
   if (!S.lib.length) return emptyView();
   const g = groupBy(S.lib, (t) => t.artists);
   const keys = [...g.keys()].sort(collator.compare);
   if (!g.has(S.sel.artist)) S.sel.artist = keys[0];
-  split(`艺术家<span class="muted">${keys.length}</span>`);
+  $('#view').innerHTML = `<div class="split">
+    <section class="pane-left glass"><div class="pane-head">艺术家<span class="muted">${keys.length}</span></div><div class="pane-list" id="left"></div></section>
+    <section class="pane-right"><div class="vlist" id="list"></div><div class="pane-foot" id="rfoot"></div></section></div>`;
   const left = $('#left');
   left.innerHTML = keys.map((k) => `<div class="li${k === S.sel.artist ? ' active' : ''}" data-k="${esc(k)}"><span>${esc(k)}</span><em>${g.get(k).length}</em></div>`).join('');
   left.onclick = (e) => {
@@ -216,10 +235,34 @@ function viewArtists() {
     S.sel.artist = li.dataset.k;
     left.querySelector('.active')?.classList.remove('active');
     li.classList.add('active');
-    showTracks(g.get(li.dataset.k), { grouped: true, title: li.dataset.k });
+    showArtist(li.dataset.k, g.get(li.dataset.k));
   };
-  left.querySelector('.active')?.scrollIntoView({ block: 'center' });
-  showTracks(g.get(S.sel.artist), { grouped: true, title: S.sel.artist });
+  centerIn(left, left.querySelector('.active'));
+  showArtist(S.sel.artist, g.get(S.sel.artist));
+}
+function showArtist(name, tracks) {
+  const albums = albumsOf(tracks);
+  const header = `
+    <div class="hero"><div class="meta">
+      <div class="kicker">艺术家</div><h1>${esc(name)}</h1>
+      <div class="sub">${albums.length} 张专辑 · ${tracks.length} 首 · ${fmtTotal(sum(tracks, (t) => t.duration))}</div>
+      <div class="rh-actions"><button class="btn" data-act="playall">${icon('play')}播放全部</button>
+        <button class="btn ghost" data-act="shuffleall">${icon('shuffle')}随机播放</button></div></div></div>
+    <div class="shelf-title"><span>专辑</span></div>
+    <div class="shelf">${albums.map((a, i) => `
+      <div class="card" data-album="${i}" title="${esc(a.title)}">
+        <div class="cover">${icon('music')}<img data-cover="${esc(a.cover)}" alt=""></div>
+        <div class="t">${esc(a.title)}</div><div class="s">${a.year || ''}</div></div>`).join('')}</div>
+    <div class="list-title">歌曲</div>`;
+  showTracks(tracks, { grouped: true, header });
+  const head = $('#list .vhead');
+  observeCovers(head);
+  head.onclick = (e) => {
+    const c = e.target.closest('[data-album]');
+    if (!c) return;
+    S.sel.album = albums[+c.dataset.album].key;
+    go('albums');
+  };
 }
 
 function albumList() {
@@ -252,18 +295,19 @@ function viewAlbums() {
   };
 }
 function viewAlbumDetail(a) {
-  $('#view').innerHTML = `<div class="album-page">
-    <div class="album-hero">
-      <button class="icon-btn" id="album-back" title="返回">${icon('back')}</button>
-      <div class="cover lg">${icon('music')}<img data-cover="${esc(a.cover)}" data-size="400" alt=""></div>
+  $('#view').innerHTML = `<div class="album-page"><div class="vlist" id="list"></div></div>`;
+  const header = `
+    <div class="hero" style="position: relative; padding-top: 52px">
+      <button class="icon-btn back-btn" id="album-back" title="返回专辑">${icon('back')}</button>
+      <div class="cover lg">${icon('music')}<img data-cover="${esc(a.cover)}" data-size="500" alt=""></div>
       <div class="meta"><div class="kicker">专辑</div><h1>${esc(a.title)}</h1>
         <div class="sub">${esc(a.artist)}${a.year ? ' · ' + a.year : ''} · ${a.tracks.length} 首 · ${fmtTotal(sum(a.tracks, (t) => t.duration))}</div>
         <div class="rh-actions"><button class="btn" data-act="playall">${icon('play')}播放</button>
           <button class="btn ghost" data-act="shuffleall">${icon('shuffle')}随机播放</button></div></div>
-    </div><div class="vlist" id="list"></div></div>`;
+    </div>`;
+  showTracks(a.tracks, { header });
   observeCovers($('#view'));
   $('#album-back').onclick = () => { S.sel.album = null; render(); };
-  showTracks(a.tracks);
 }
 
 function viewSearch() {
@@ -314,7 +358,7 @@ function viewFolders() {
 }
 
 // ═════════════════════════ 设置 ═════════════════════════
-const ACCENTS = ['#e53935', '#ff7043', '#f9a825', '#43a047', '#00acc1', '#1e88e5', '#7e57c2', '#d81b60'];
+const ACCENTS = ['#ff5a3c', '#e53935', '#ff7043', '#f9a825', '#43a047', '#00acc1', '#1e88e5', '#7e57c2'];
 function viewSettings() {
   const tab = S.settingsTab;
   let html = '';
@@ -331,7 +375,7 @@ function viewSettings() {
       <label class="opt"><input type="checkbox" id="opt-autoscan"${S.settings.autoScan !== false ? ' checked' : ''}>启动时自动刷新音乐库</label>
       <div class="stats">共 ${S.tracks.length} 首歌曲 · ${fmtSize(sum(S.tracks, (t) => t.size))} · ${fmtTotal(sum(S.tracks, (t) => t.duration))}</div>`;
   } else if (tab === 'appearance') {
-    html = `<h2>外观</h2><p class="muted">主题色会应用到导航指示条、按钮、进度条和正在播放的歌曲。</p>
+    html = `<h2>外观</h2><p class="muted">背景会跟随正在播放的封面变色；主题色用于正在播放的歌曲、计数和没有封面时的背景。</p>
       <h3>主题色</h3><div class="swatches">${ACCENTS.map((c) => `<button class="sw${c === S.settings.accent ? ' on' : ''}" data-c="${c}" style="background:${c}"></button>`).join('')}</div>`;
   } else if (tab === 'playback') {
     html = `<h2>播放</h2>
@@ -349,14 +393,25 @@ function viewSettings() {
         <tr><td><kbd>Ctrl</kbd> + <kbd>↑</kbd> / <kbd>↓</kbd></td><td>音量 + / −</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>F</kbd></td><td>搜索</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>关闭弹层</td></tr></table>`;
+  } else if (tab === 'about') {
+    const u = UPD.info;
+    html = `<h2>关于 Pulse</h2>
+      <div class="about-ver muted">当前版本 <b style="color: var(--text)">${esc(UPD.current || '—')}</b></div>
+      <div class="row-actions">
+        <button class="btn" id="upd-check"${api.updateCheck ? '' : ' disabled'}>${icon('refresh')}检查更新</button>
+        ${u && u.available && !UPD.busy ? `<button class="btn ghost" id="upd-go">${icon('down')}更新到 ${esc(u.latest)} 并重启</button>` : ''}
+        <span class="muted" id="upd-status">${esc(UPD.status)}</span></div>
+      <label class="opt"><input type="checkbox" id="opt-autoupd"${S.settings.autoUpdateCheck !== false ? ' checked' : ''}>启动时自动检查更新</label>
+      <p class="muted small">更新会从 GitHub Releases（LiuTao341/Pulse）下载新的 exe，替换当前程序文件并自动重启，播放进度会保留。<br>
+        程序所在的文件夹需要可写；如果放在只读位置，请手动下载。</p>`;
   } else {
     const list = [...S.blacklist.values()];
-    html = `<h2 class="accent">黑名单</h2><p>黑名单中的歌曲在播放时将被跳过。</p>
+    html = `<h2>黑名单</h2><p>黑名单中的歌曲在播放时将被跳过。</p>
       <button class="btn ghost" id="bl-clear"${list.length ? '' : ' disabled'}>清空黑名单…</button>
       <div class="bl">${list.map((b) => `<div class="bl-row"><div><div class="t">${esc(b.title)}</div><div class="s">${esc(b.artist)}</div></div>
         <button class="link" data-unblack="${esc(b.path)}">移除</button></div>`).join('') || '<div class="hint">黑名单为空</div>'}</div>`;
   }
-  $('#view').innerHTML = `<div class="settings">${html}</div>`;
+  $('#view').innerHTML = `<div class="settings"><div class="glass">${html}</div></div>`;
   const v = $('#view');
 
   if (tab === 'library') {
@@ -385,6 +440,10 @@ function viewSettings() {
       $('#xfade-val').textContent = xfadeLabel(v);
       saveSettingsSoon();
     };
+  } else if (tab === 'about') {
+    if ($('#upd-check')) $('#upd-check').onclick = () => checkUpdate(true);
+    if ($('#upd-go')) $('#upd-go').onclick = installUpdate;
+    $('#opt-autoupd').onchange = (e) => { S.settings.autoUpdateCheck = e.target.checked; persist.settings(); };
   } else {
     $('#bl-clear').onclick = async () => {
       if (!(await askConfirm('清空黑名单？'))) return;
@@ -396,9 +455,15 @@ function viewSettings() {
   }
 }
 const xfadeLabel = (v) => (v ? `${v} 秒` : '关闭（无缝衔接）');
+const lighten = (hex, k) => {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (v) => Math.round(v + (255 - v) * k).toString(16).padStart(2, '0');
+  return '#' + ch(n >> 16) + ch((n >> 8) & 255) + ch(n & 255);
+};
 function setAccent(c) {
   S.settings.accent = c;
   document.documentElement.style.setProperty('--accent', c);
+  document.documentElement.style.setProperty('--accent-text', lighten(c, 0.35));
 }
 
 // ═════════════════════════ 音乐库操作 ═════════════════════════
@@ -807,11 +872,13 @@ function updateNowPlaying(t) {
   const small = $('#np-img'), big = $('#npo-img');
   small.classList.remove('ok');
   big.classList.remove('ok');
-  $('#npo-bg').style.backgroundImage = 'none';
   loadCover(t.path, 200).then((u) => { if (P.current === t && u) { small.src = u; small.classList.add('ok'); } });
   loadCover(t.path, 600).then((u) => {
     if (P.current !== t) return;
-    if (u) { big.src = u; big.classList.add('ok'); $('#npo-bg').style.backgroundImage = `url("${u}")`; }
+    const bg = u ? `url("${u}")` : '';
+    if (u) { big.src = u; big.classList.add('ok'); }
+    $('#bd-img').style.backgroundImage = bg;
+    $('#npo-bg').style.backgroundImage = bg;
     if ('mediaSession' in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: t.title, artist: artistOf(t), album: t.album,
@@ -855,7 +922,7 @@ function syncLyrics(time) {
   const p = box.children[i];
   if (!p) return;
   p.classList.add('on');
-  if ($('#npo').classList.contains('open')) p.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if ($('#npo').classList.contains('open')) centerIn(box, p, true);
 }
 
 function renderQueue() {
@@ -871,7 +938,7 @@ function renderQueue() {
       <span class="d">${fmtTime(t.duration)}</span>
       <button class="icon-btn sm" data-rm="${i}" title="从队列移除">${icon('close')}</button></div>`;
   }).join('') || '<div class="hint">播放队列为空</div>';
-  box.querySelector('.qi.on')?.scrollIntoView({ block: 'center' });
+  centerIn(box, box.querySelector('.qi.on'));
 }
 
 // —— 会话恢复 ——
@@ -896,11 +963,14 @@ function bind() {
 
   // 标题栏
   $('#nav').onclick = (e) => {
-    const b = e.target.closest('button');
+    const b = e.target.closest('[data-view]');
     if (!b) return;
-    if (b.dataset.view) go(b.dataset.view);
-    else if (b.dataset.stab) { S.settingsTab = b.dataset.stab; render(); }
-    else if ('back' in b.dataset) go(S.prevView || 'artists');
+    if (b.dataset.view === 'albums' && S.view === 'albums') S.sel.album = null; // 再点一次回到专辑墙
+    go(b.dataset.view);
+  };
+  $('#subnav').onclick = (e) => {
+    const b = e.target.closest('[data-stab]');
+    if (b) { S.settingsTab = b.dataset.stab; render(); }
   };
   $('#btn-settings').onclick = () => go('settings');
   $('#win-min').onclick = () => api.minimize();
@@ -908,6 +978,12 @@ function bind() {
   $('#win-close').onclick = () => { saveSession(); api.close(); };
   api.on('win:state', ({ maximized }) => ($('#win-max').innerHTML = icon(maximized ? 'restore' : 'max')));
   api.on('scan:progress', ({ done, total }) => ($('#scan-ind').textContent = `正在扫描 ${done}/${total}`));
+  $('#update-pill').onclick = installUpdate;
+  api.on('update:progress', ({ done, total }) => {
+    const pct = total ? Math.floor((done / total) * 100) : 0;
+    $('#update-pill').textContent = pct >= 100 ? '正在重启…' : `正在下载 ${pct}%`;
+    updStatus(pct >= 100 ? '下载完成，正在重启…' : `正在下载 ${pct}%`);
+  });
   api.on('tray', async (action) => {
     if (action === 'toggle') togglePlay();
     else if (action === 'next') next();
@@ -1029,6 +1105,55 @@ function bind() {
   });
 }
 
+// ═════════════════════════ 应用内更新 ═════════════════════════
+const UPD = { current: '', info: null, status: '', busy: false };
+function updStatus(text) {
+  UPD.status = text;
+  const el = $('#upd-status');
+  if (el) el.textContent = text;
+}
+function showUpdatePill() {
+  const pill = $('#update-pill');
+  const u = UPD.info;
+  pill.hidden = !(u && u.available);
+  if (!pill.hidden && !UPD.busy) pill.innerHTML = `${icon('down')}新版本 ${esc(u.latest)} · 更新并重启`;
+}
+async function checkUpdate(manual = false) {
+  if (!api.updateCheck || UPD.busy) return;
+  updStatus('正在检查…');
+  try {
+    UPD.info = await api.updateCheck();
+    UPD.current = UPD.info.current;
+    updStatus(UPD.info.available ? `发现新版本 ${UPD.info.latest}` : '已是最新版本');
+  } catch (e) {
+    updStatus('检查失败：' + (e && e.message ? e.message : e));
+    if (manual) toast('检查更新失败');
+  }
+  showUpdatePill();
+  if (S.view === 'settings' && S.settingsTab === 'about') viewSettings();
+}
+async function installUpdate() {
+  const u = UPD.info;
+  if (!u || !u.available || UPD.busy) return;
+  if (!(await askConfirm(`更新到 ${u.latest}？下载完成后 Pulse 会自动重启，播放进度会保留。`))) return;
+  UPD.busy = true;
+  const pill = $('#update-pill');
+  pill.hidden = false;
+  pill.disabled = true;
+  pill.textContent = '正在下载 0%';
+  updStatus('正在下载…');
+  saveSession();
+  try {
+    await api.updateInstall(u.url); // 成功时程序会退出并自动重启
+  } catch (e) {
+    UPD.busy = false;
+    pill.disabled = false;
+    showUpdatePill();
+    updStatus('更新失败：' + (e && e.message ? e.message : e));
+    toast('更新失败：' + (e && e.message ? e.message : e));
+  }
+}
+
 // ═════════════════════════ 启动 ═════════════════════════
 async function init() {
   bind();
@@ -1044,5 +1169,7 @@ async function init() {
   render();
   restoreSession();
   if (S.settings.autoScan !== false && S.folders.length) doScan();
+  if (api.version) api.version().then((v) => (UPD.current = v)).catch(() => {});
+  if (api.updateCheck && S.settings.autoUpdateCheck !== false) setTimeout(() => checkUpdate(false), 4000);
 }
 init();
