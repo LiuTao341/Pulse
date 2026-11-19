@@ -59,6 +59,9 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   folder: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z"/>',
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>',
+  headphones: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4.5" height="7" rx="1.5"/><rect x="16.5" y="14" width="4.5" height="7" rx="1.5"/>',
+  mini: '<rect x="3" y="5" width="18" height="14" rx="2"/><rect x="11" y="12" width="8" height="5" rx="1" fill="currentColor"/>',
+  expand: '<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',
   artist: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>',
   album: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="12" r="3.5"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
@@ -384,7 +387,19 @@ function viewSettings() {
         <input type="range" id="opt-xfade" min="0" max="12" step="1" value="${crossfadeSec()}" style="--p:${(crossfadeSec() / 12) * 100}%">
         <b id="xfade-val">${xfadeLabel(crossfadeSec())}</b></div>
       <p class="muted small">设为 0 时为无缝衔接：下一首会提前加载，并在当前歌曲结束的瞬间接上，适合现场专辑、古典、DJ 混音等连续曲目。<br>大于 0 时，两首歌会在结尾交叉渐变。手动切歌总是立即切换。</p>
+      <h3>耳机柔和模式</h3>
+      <label class="opt"><input type="checkbox" id="soft-on"${softCfg().on ? ' checked' : ''}>开启（播放栏右侧的耳机按钮也可以切换）</label>
+      <div class="sub-opts${softCfg().on ? '' : ' off'}">
+        <label class="opt"><input type="checkbox" id="soft-norm"${softCfg().normalize ? ' checked' : ''}>响度均衡：按 ReplayGain 标签把太响的歌压低，没有标签的歌统一降低 6 dB</label>
+        <div class="opt-range"><span>高频柔化</span>
+          <input type="range" id="soft-treble" min="0" max="6" step="1" value="${softCfg().treble}" style="--p:${(softCfg().treble / 6) * 100}%">
+          <b id="soft-treble-val">${softCfg().treble ? '−' + softCfg().treble + ' dB' : '关闭'}</b></div>
+        <label class="opt"><input type="checkbox" id="soft-xf"${softCfg().crossfeed ? ' checked' : ''}>声道交叉馈送：让左右声道少量互混，减轻"声音在脑袋里"的疲劳感</label>
+        <label class="opt"><input type="checkbox" id="soft-lim"${softCfg().limiter ? ' checked' : ''}>软限幅：防止削波失真</label>
+      </div>
+      <p class="muted small">只处理播放的声音，不会修改音乐文件。响度均衡需要歌曲带 ReplayGain 标签（可用 foobar2000 等工具扫描写入），刷新音乐库后生效。</p>
       <h3>其他</h3>
+      <label class="opt"><input type="checkbox" id="opt-mini"${S.settings.miniEnabled !== false ? ' checked' : ''}>启用迷你播放器（播放栏按钮和托盘菜单）</label>
       <label class="opt"><input type="checkbox" id="opt-tray"${S.settings.closeToTray !== false ? ' checked' : ''}>关闭窗口时最小化到系统托盘（右键托盘图标可退出）</label>
       <label class="opt"><input type="checkbox" id="opt-restore"${S.settings.restoreSession !== false ? ' checked' : ''}>启动时恢复上次的播放队列和进度</label>
       <h3>快捷键</h3><table class="kbd">
@@ -432,7 +447,18 @@ function viewSettings() {
     v.querySelectorAll('.sw').forEach((b) => (b.onclick = () => { setAccent(b.dataset.c); persist.settings(); viewSettings(); }));
   } else if (tab === 'playback') {
     $('#opt-restore').onchange = (e) => { S.settings.restoreSession = e.target.checked; persist.settings(); };
-    $('#opt-tray').onchange = (e) => { S.settings.closeToTray = e.target.checked; persist.settings(); };
+    $('#opt-tray').onchange = (e) => { S.settings.closeToTray = e.target.checked; S.settings.closeHintShown = true; persist.settings(); };
+    $('#opt-mini').onchange = (e) => { S.settings.miniEnabled = e.target.checked; applyMiniSetting(); persist.settings(); };
+    $('#soft-on').onchange = (e) => { setSoft({ on: e.target.checked }); viewSettings(); };
+    $('#soft-norm').onchange = (e) => setSoft({ normalize: e.target.checked });
+    $('#soft-xf').onchange = (e) => setSoft({ crossfeed: e.target.checked });
+    $('#soft-lim').onchange = (e) => setSoft({ limiter: e.target.checked });
+    $('#soft-treble').oninput = (e) => {
+      const v = +e.target.value;
+      e.target.style.setProperty('--p', (v / 6) * 100 + '%');
+      $('#soft-treble-val').textContent = v ? `−${v} dB` : '关闭';
+      setSoft({ treble: v });
+    };
     $('#opt-xfade').oninput = (e) => {
       const v = +e.target.value;
       S.settings.crossfade = v;
@@ -589,13 +615,19 @@ const observeCovers = (root) => root.querySelectorAll('img[data-cover]').forEach
 // 两个 <audio> 交替使用：当前曲目播放时，另一个预加载下一首。
 // 快结束时提前启动下一首：淡入淡出为 0 时做无缝衔接，大于 0 时做等功率交叉渐变。
 const decks = [new Audio(), new Audio()];
-decks.forEach((d) => { d.preload = 'auto'; d._fade = 1; d._id = null; d._ramp = null; });
+decks.forEach((d) => { d.preload = 'auto'; d.crossOrigin = 'anonymous'; d._fade = 1; d._id = null; d._ramp = null; d._rgDb = null; d._gain = null; });
+/** 音源地址：本地音频协议出错时退回 Tauri 资源协议（此时无法使用耳机柔和模式） */
+const srcOf = (t) => (S.mediaFallback && t.altUrl ? t.altUrl : t.url);
 let audio = decks[0];                       // 当前（正在播放的）deck
 const otherDeck = () => (audio === decks[0] ? decks[1] : decks[0]);
 const Vol = { pos: 0.8, muted: false };
 // 对数音量：滑块位置 p → 增益 p³（约 60 dB 动态范围，听感上均匀变化）
 const gainOf = (p) => Math.pow(Math.min(1, Math.max(0, p)), 3);
-const applyGain = (d) => { d.volume = Vol.muted ? 0 : Math.min(1, Math.max(0, gainOf(Vol.pos) * d._fade)); };
+function applyGain(d) {
+  const g = Vol.muted ? 0 : Math.max(0, gainOf(Vol.pos) * d._fade * rgFactor(d));
+  if (d._gain) { d.volume = 1; d._gain.gain.value = Math.min(4, g); }  // 接入 Web Audio 后由 GainNode 控制
+  else d.volume = Math.min(1, g);
+}
 const crossfadeSec = () => Math.max(0, Math.min(12, +S.settings.crossfade || 0));
 let transitioning = false;
 
@@ -651,7 +683,8 @@ function preloadNext() {
   const id = i >= 0 ? P.queue[i] : null;
   if (!id || nx._id === id) return;
   nx._id = id;
-  nx.src = S.byId.get(id).url;
+  nx.src = srcOf(S.byId.get(id));
+  nx._rgDb = S.byId.get(id).replayGain ?? null;
   nx.load();
 }
 function setCurrent(i, t, counted) {
@@ -668,11 +701,13 @@ function transitionTo(i, fadeMs) {
   if (!t) return;
   transitioning = true;
   const old = audio, nx = otherDeck();
-  if (nx._id !== t.id) { nx._id = t.id; nx.src = t.url; } else if (nx.currentTime) nx.currentTime = 0;
+  if (nx._id !== t.id) { nx._id = t.id; nx.src = srcOf(t); } else if (nx.currentTime) nx.currentTime = 0;
+  nx._rgDb = t.replayGain ?? null;
   nx.loop = P.repeat === 'one';
   nx._fade = fadeMs > 0 ? 0 : 1;
   applyGain(nx);
   audio = nx;
+  resumeFx();
   nx.play().catch(() => {});
   setCurrent(i, t, true);
   const fin = () => {
@@ -732,12 +767,15 @@ function loadAt(i, { autoplay = true, time = 0 } = {}) {
     cur.pause(); cur._id = null; d = o;
     if (o.currentTime) o.currentTime = 0;
   } else {
-    o.pause(); d = cur; d._id = t.id; d.src = t.url;
+    o.pause(); d = cur; d._id = t.id; d.src = srcOf(t);
   }
   cur._fade = o._fade = 1;
   applyGain(cur); applyGain(o);
+  d._rgDb = t.replayGain ?? null;
+  applyGain(d);
   audio = d;
   d.loop = P.repeat === 'one';
+  resumeFx();
   if (time) {
     if (d.readyState >= 1) d.currentTime = time;
     else d.addEventListener('loadedmetadata', () => { d.currentTime = time; }, { once: true });
@@ -769,7 +807,7 @@ function togglePlay() {
     if (list.length) playList(list, 0);
     return;
   }
-  if (audio.paused) audio.play().catch(() => {});
+  if (audio.paused) { resumeFx(); audio.play().catch(() => {}); }
   else { finishTransition(); audio.pause(); }
 }
 function seekTo(sec) {
@@ -859,6 +897,151 @@ function updatePlayState() {
   $('#btn-play').innerHTML = icon(audio.paused ? 'play' : 'pause');
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = audio.paused ? 'paused' : 'playing';
   S.redraw?.();
+}
+
+// ═════════════════════════ 耳机柔和模式（Web Audio）═════════════════════════
+// 链路：deck → GainNode(音量×渐变×响度均衡) → [高频柔化] → [声道交叉馈送] → [软限幅] → 输出
+const SOFT_DEFAULT = { on: false, normalize: true, treble: 3, crossfeed: true, limiter: true };
+const softCfg = () => ({ ...SOFT_DEFAULT, ...(S.settings.soft || {}) });
+const FX = { ctx: null, input: null, n: {} };
+/** 响度均衡：有 ReplayGain 标签按标签，没有则按常见流行母带估计 −6 dB；最多提升 +6 dB */
+function rgFactor(d) {
+  const c = softCfg();
+  if (!FX.ctx || !c.on || !c.normalize) return 1;
+  const db = d._rgDb == null ? -6 : Math.min(6, d._rgDb);
+  return Math.pow(10, db / 20);
+}
+function ensureFx() {
+  if (FX.ctx) return true;
+  if (S.mediaFallback) return false;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const input = ctx.createGain();
+    for (const d of decks) {
+      const src = ctx.createMediaElementSource(d);
+      const g = ctx.createGain();
+      src.connect(g);
+      g.connect(input);
+      d._gain = g;
+    }
+    // 高频柔化：6 kHz 以上搁架衰减 + 3 kHz 附近轻微凹陷（齿音、镲片）
+    const shelf = ctx.createBiquadFilter();
+    shelf.type = 'highshelf'; shelf.frequency.value = 6000;
+    const presence = ctx.createBiquadFilter();
+    presence.type = 'peaking'; presence.frequency.value = 3200; presence.Q.value = 1.1;
+    // 声道交叉馈送（近似 Bauer）：对侧声道低通 700 Hz、延迟 0.3 ms、约 −10 dB 混入
+    const xfIn = ctx.createGain();
+    xfIn.channelCount = 2; xfIn.channelCountMode = 'explicit'; xfIn.channelInterpretation = 'speakers';
+    const split = ctx.createChannelSplitter(2), merge = ctx.createChannelMerger(2);
+    xfIn.connect(split);
+    const path = (from, to, cross) => {
+      const g = ctx.createGain();
+      if (!cross) { g.gain.value = 0.85; split.connect(g, from); }
+      else {
+        const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 700; lp.Q.value = 0.5;
+        const dl = ctx.createDelay(0.01); dl.delayTime.value = 0.0003;
+        g.gain.value = 0.32;
+        split.connect(lp, from); lp.connect(dl); dl.connect(g);
+      }
+      g.connect(merge, 0, to);
+    };
+    path(0, 0, false); path(1, 1, false); path(0, 1, true); path(1, 0, true);
+    // 软限幅：防止叠加增益后削波
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -4; limiter.knee.value = 4; limiter.ratio.value = 20;
+    limiter.attack.value = 0.002; limiter.release.value = 0.15;
+    Object.assign(FX, { ctx, input, n: { shelf, presence, xfIn, merge, limiter } });
+    rewireFx();
+    decks.forEach(applyGain);
+    return true;
+  } catch (e) {
+    console.warn('[pulse] Web Audio 初始化失败', e);
+    return false;
+  }
+}
+function rewireFx() {
+  if (!FX.ctx) return;
+  const c = softCfg(), n = FX.n;
+  for (const x of [FX.input, n.shelf, n.presence, n.merge, n.limiter]) { try { x.disconnect(); } catch { /* 未连接 */ } }
+  let cur = FX.input;
+  const chain = (node) => { cur.connect(node); cur = node; };
+  if (c.on && c.treble > 0) {
+    n.shelf.gain.value = -c.treble;
+    n.presence.gain.value = -c.treble / 2;
+    chain(n.shelf); chain(n.presence);
+  }
+  if (c.on && c.crossfeed) { cur.connect(n.xfIn); cur = n.merge; }
+  if (c.on && c.limiter) chain(n.limiter);
+  cur.connect(FX.ctx.destination);
+}
+function resumeFx() { if (FX.ctx && FX.ctx.state === 'suspended') FX.ctx.resume().catch(() => {}); }
+function setSoft(patch) {
+  const next = { ...softCfg(), ...patch };
+  if (next.on && !ensureFx()) {
+    toast('当前环境无法启用耳机柔和模式');
+    next.on = false;
+  }
+  S.settings.soft = next;
+  rewireFx();
+  resumeFx();
+  decks.forEach(applyGain);
+  updateSoftBtn();
+  saveSettingsSoon();
+}
+function updateSoftBtn() {
+  const on = softCfg().on;
+  const b = $('#btn-soft');
+  b.classList.toggle('on', on);
+  b.title = on ? '耳机柔和模式：开' : '耳机柔和模式：关';
+}
+
+// ═════════════════════════ 迷你播放器 ═════════════════════════
+const DRAG_TARGETS = ['.player', '.np', '.np-text', '.np-title', '.np-artist'];
+async function setMini(on) {
+  if (on && S.settings.miniEnabled === false) return;
+  if (on === !!S.mini) return;
+  S.mini = on;
+  $('#npo').classList.remove('open');
+  $('#queue').classList.remove('open');
+  $('#btn-queue').classList.remove('on');
+  hideMenu();
+  // 迷你模式下拖动播放条即可移动窗口
+  for (const sel of DRAG_TARGETS) for (const el of document.querySelectorAll(sel)) el.toggleAttribute('data-tauri-drag-region', on);
+  if (on) document.body.classList.add('mini');
+  try { await (api.setMini && api.setMini(on)); } catch (e) { console.warn(e); }
+  if (!on) { document.body.classList.remove('mini'); S.redraw?.(); }
+}
+function applyMiniSetting() {
+  document.body.classList.toggle('no-mini', S.settings.miniEnabled === false);
+  if (S.settings.miniEnabled === false && S.mini) setMini(false);
+}
+
+// ═════════════════════════ 第一次关闭：缩到托盘还是退出 ═════════════════════════
+function askClose() {
+  if ($('#modal').classList.contains('open')) return;
+  const m = $('#modal');
+  m.innerHTML = `<div class="dialog">
+    <h3>关闭 Pulse 时</h3>
+    <p class="lead">缩到托盘后音乐会继续播放，点任务栏右下角的 Pulse 图标可以重新打开。</p>
+    <label class="opt"><input type="checkbox" id="dlg-remember" checked>记住我的选择，不再询问</label>
+    <div class="dlg-btns"><button class="btn ghost" data-c="quit">退出 Pulse</button><button class="btn" data-c="tray">缩到托盘</button></div></div>`;
+  m.classList.add('open');
+  const done = async (choice) => {
+    const remember = $('#dlg-remember').checked;
+    m.classList.remove('open');
+    m.innerHTML = '';
+    document.removeEventListener('keydown', key, true);
+    if (!choice) return;
+    if (remember) { S.settings.closeHintShown = true; S.settings.closeToTray = choice === 'tray'; }
+    saveSession();
+    await persist.settings();
+    if (choice === 'tray') api.hide ? api.hide() : null;
+    else api.exit && api.exit();
+  };
+  const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(null); } };
+  document.addEventListener('keydown', key, true);
+  m.onmousedown = (e) => { if (e.target === m) done(null); };
+  m.onclick = (e) => { const b = e.target.closest('[data-c]'); if (b) done(b.dataset.c); };
 }
 
 // —— 播放栏 / 正在播放 ——
@@ -988,6 +1171,7 @@ function bind() {
     if (action === 'toggle') togglePlay();
     else if (action === 'next') next();
     else if (action === 'prev') prev();
+    else if (action === 'mini') setMini(S.settings.miniEnabled !== false);
     else if (action === 'quit') { saveSession(); await new Promise((r) => setTimeout(r, 150)); api.exit && api.exit(); }
   });
 
@@ -1026,7 +1210,11 @@ function bind() {
     const qi = e.target.closest('.qi');
     if (qi) loadAt(+qi.dataset.i);
   };
-  $('#np-open').onclick = () => P.current && $('#npo').classList.toggle('open');
+  $('#np-open').onclick = () => !S.mini && P.current && $('#npo').classList.toggle('open');
+  $('#btn-soft').onclick = () => setSoft({ on: !softCfg().on });
+  $('#btn-mini').onclick = () => setMini(true);
+  $('#btn-expand').onclick = () => setMini(false);
+  api.on('close', askClose);
   $('#npo-close').onclick = () => $('#npo').classList.remove('open');
   $('#lyrics').onclick = (e) => {
     const p = e.target.closest('p[data-i]');
@@ -1060,6 +1248,14 @@ function bind() {
   on('playing', () => (errors = 0));
   on('error', () => {
     if (!P.current || !audio.getAttribute('src')) return;
+    // 本地音频协议不可用：退回资源协议重新加载（只在尚未接入 Web Audio 时可行）
+    if (!S.mediaFallback && !FX.ctx && P.current.altUrl) {
+      S.mediaFallback = true;
+      decks.forEach((d) => { d.removeAttribute('crossorigin'); d._id = null; });
+      console.warn('[pulse] media 协议不可用，已退回 asset 协议');
+      loadAt(P.pos, { time: audio.currentTime || 0 });
+      return;
+    }
     toast(`无法播放：${P.current.title}`);
     if (++errors < 5) {
       const i = findPlayable(P.pos + 1, 1);
@@ -1089,6 +1285,7 @@ function bind() {
     const typing = (el.tagName === 'INPUT' && !['checkbox', 'range'].includes(el.type)) || el.tagName === 'SELECT';
     if (e.ctrlKey && e.key.toLowerCase() === 'f') { e.preventDefault(); $('#search').focus(); return; }
     if (e.key === 'Escape') {
+      if (S.mini) return;
       hideMenu();
       if (typing) el.blur();
       $('#npo').classList.remove('open');
@@ -1166,6 +1363,9 @@ async function init() {
   $('#vol').value = Math.round(Vol.pos * 100);
   updateVolUi();
   updateModeBtns();
+  applyMiniSetting();
+  if (softCfg().on && !ensureFx()) S.settings.soft = { ...softCfg(), on: false };
+  updateSoftBtn();
   render();
   restoreSession();
   if (S.settings.autoScan !== false && S.folders.length) doScan();

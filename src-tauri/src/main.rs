@@ -9,18 +9,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::time::Duration;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalSize, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 use walkdir::WalkDir;
 
 const AUDIO_EXT: &[&str] = &["mp3", "flac", "wav", "ogg", "oga", "opus", "m4a", "aac", "webm"];
+const META_V: u32 = 2;
 const REPO: &str = "LiuTao341/Pulse";
 const COVER_NAMES: &[&str] = &["cover", "folder", "front", "album", "albumart"];
 
@@ -54,6 +55,10 @@ struct Track {
     added_at: f64,
     play_count: u32,
     last_played: f64,
+    /// ReplayGain 曲目增益（dB），用于响度均衡
+    replay_gain: Option<f64>,
+    /// 元数据版本：低于 META_V 的记录会在下次扫描时重新读取
+    meta_v: u32,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -71,6 +76,7 @@ struct AppState {
     file: PathBuf,
     scanning: Mutex<bool>,
     covers: Mutex<HashMap<String, Option<String>>>,
+    prev_size: Mutex<Option<PhysicalSize<u32>>>,
 }
 
 // ───────────────────────── 工具 ─────────────────────────
@@ -177,6 +183,7 @@ fn read_track(p: &str, folder: &str, size: u64, mtime: f64, prev: Option<&Track>
         added_at: prev.map(|x| x.added_at).unwrap_or_else(now_ms),
         play_count: prev.map(|x| x.play_count).unwrap_or(0),
         last_played: prev.map(|x| x.last_played).unwrap_or(0.0),
+        meta_v: META_V,
         ..Default::default()
     };
     // 文件名兜底：“歌手 - 歌名”
@@ -218,6 +225,9 @@ fn read_track(p: &str, folder: &str, size: u64, mtime: f64, prev: Option<&Track>
             t.year = tag.year();
             t.track_no = tag.track();
             t.disc_no = tag.disk();
+            t.replay_gain = tag
+                .get_string(&ItemKey::ReplayGainTrackGain)
+                .and_then(|v| v.trim().trim_end_matches("dB").trim_end_matches("db").trim().parse::<f64>().ok());
         }
     }
     t
@@ -260,7 +270,7 @@ fn scan(app: &AppHandle) -> Option<Vec<Track>> {
                     .unwrap_or(0.0);
                 match old.get(&p) {
                     // 增量：大小和修改时间都没变就直接复用
-                    Some(t) if t.size == size && t.mtime == mtime => {
+                    Some(t) if t.size == size && t.mtime == mtime && t.meta_v >= META_V => {
                         let mut t = t.clone();
                         t.folder = folder;
                         out.push(t);
@@ -465,6 +475,137 @@ fn app_exit(app: AppHandle) {
     app.exit(0);
 }
 
+// ───────────────────────── 本地音频协议 ─────────────────────────
+// media://（Windows 上为 http://media.localhost/）：支持 Range 分段读取，并带 CORS 头，
+// 让 <audio crossorigin> 能接入 Web Audio（耳机柔和模式需要）。
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn mime_of(path: &str) -> &'static str {
+    match Path::new(path).extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+        Some("mp3") => "audio/mpeg",
+        Some("flac") => "audio/flac",
+        Some("wav") => "audio/wav",
+        Some("ogg") | Some("oga") | Some("opus") => "audio/ogg",
+        Some("m4a") => "audio/mp4",
+        Some("aac") => "audio/aac",
+        Some("webm") => "audio/webm",
+        _ => "application/octet-stream",
+    }
+}
+
+fn media_response(req: &tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8>> {
+    use tauri::http::Response;
+    const CHUNK: u64 = 4 * 1024 * 1024;
+    let empty = |code: u16| Response::builder().status(code).header("Access-Control-Allow-Origin", "*").body(Vec::new()).unwrap();
+    let path = percent_decode(req.uri().path().trim_start_matches('/'));
+    let mut f = match fs::File::open(&path) {
+        Ok(f) => f,
+        Err(_) => return empty(404),
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let mime = mime_of(&path);
+    let range = req
+        .headers()
+        .get("range")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("bytes="))
+        .map(|s| s.to_string());
+    match range {
+        Some(r) if len > 0 => {
+            let (a, b) = r.split_once('-').unwrap_or((r.as_str(), ""));
+            let (a, b) = (a.trim(), b.trim());
+            let (start, mut end) = if a.is_empty() {
+                let n: u64 = b.parse().unwrap_or(0);
+                (len.saturating_sub(n), len - 1)
+            } else {
+                (a.parse().unwrap_or(0), if b.is_empty() { len - 1 } else { b.parse().unwrap_or(len - 1) })
+            };
+            if start >= len {
+                return Response::builder()
+                    .status(416)
+                    .header("Content-Range", format!("bytes */{}", len))
+                    .header("Access-Control-Allow-Origin", "*")
+                    .body(Vec::new())
+                    .unwrap();
+            }
+            end = end.min(len - 1).min(start + CHUNK - 1);
+            let mut buf = vec![0u8; (end - start + 1) as usize];
+            if f.seek(SeekFrom::Start(start)).is_err() || f.read_exact(&mut buf).is_err() {
+                return empty(500);
+            }
+            Response::builder()
+                .status(206)
+                .header("Content-Type", mime)
+                .header("Accept-Ranges", "bytes")
+                .header("Content-Range", format!("bytes {}-{}/{}", start, end, len))
+                .header("Content-Length", buf.len().to_string())
+                .header("Access-Control-Allow-Origin", "*")
+                .body(buf)
+                .unwrap()
+        }
+        _ => {
+            let mut buf = Vec::new();
+            if f.read_to_end(&mut buf).is_err() {
+                return empty(500);
+            }
+            Response::builder()
+                .status(200)
+                .header("Content-Type", mime)
+                .header("Accept-Ranges", "bytes")
+                .header("Content-Length", buf.len().to_string())
+                .header("Access-Control-Allow-Origin", "*")
+                .body(buf)
+                .unwrap()
+        }
+    }
+}
+
+// ───────────────────────── 迷你播放器 ─────────────────────────
+#[tauri::command]
+fn set_mini(app: AppHandle, state: tauri::State<'_, AppState>, on: bool) -> Result<(), String> {
+    let w = app.get_webview_window("main").ok_or("找不到主窗口")?;
+    let e = |x: tauri::Error| x.to_string();
+    if on {
+        if w.is_maximized().unwrap_or(false) {
+            w.unmaximize().map_err(e)?;
+        }
+        *state.prev_size.lock().unwrap() = w.inner_size().ok();
+        w.set_min_size(Some(LogicalSize::new(300.0, 72.0))).map_err(e)?;
+        w.set_size(LogicalSize::new(380.0, 84.0)).map_err(e)?;
+        w.set_resizable(false).map_err(e)?;
+        w.set_maximizable(false).map_err(e)?;
+        w.set_always_on_top(true).map_err(e)?;
+    } else {
+        w.set_always_on_top(false).map_err(e)?;
+        w.set_resizable(true).map_err(e)?;
+        w.set_maximizable(true).map_err(e)?;
+        w.set_min_size(Some(LogicalSize::new(960.0, 620.0))).map_err(e)?;
+        match *state.prev_size.lock().unwrap() {
+            Some(s) if s.width >= 960 => w.set_size(s).map_err(e)?,
+            _ => w.set_size(LogicalSize::new(1280.0, 800.0)).map_err(e)?,
+        }
+    }
+    let _ = w.show();
+    let _ = w.set_focus();
+    Ok(())
+}
+
 // ───────────────────────── 应用内更新 ─────────────────────────
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -593,15 +734,19 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "播放 / 暂停", true, None::<&str>)?;
     let prev = MenuItem::with_id(app, "prev", "上一首", true, None::<&str>)?;
     let next = MenuItem::with_id(app, "next", "下一首", true, None::<&str>)?;
+    let mini = MenuItem::with_id(app, "mini", "迷你播放器", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &toggle, &prev, &next, &sep, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &toggle, &prev, &next, &mini, &sep, &quit])?;
     let mut tray = TrayIconBuilder::with_id("main")
         .tooltip("Pulse")
         .menu(&menu)
         .on_menu_event(|app, ev| match ev.id().as_ref() {
             "show" => show_main(app),
-            "toggle" | "prev" | "next" => {
+            "toggle" | "prev" | "next" | "mini" => {
+                if ev.id().as_ref() == "mini" {
+                    show_main(app);
+                }
                 let _ = app.emit("tray-action", ev.id().as_ref().to_string());
             }
             // 交给前端先保存播放进度再退出（前端无响应时 1.5 秒后强制退出）
@@ -634,6 +779,9 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .register_asynchronous_uri_scheme_protocol("media", |_ctx, request, responder| {
+            std::thread::spawn(move || responder.respond(media_response(&request)));
+        })
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             fs::create_dir_all(&dir)?;
@@ -644,6 +792,7 @@ fn main() {
                 file,
                 scanning: Mutex::new(false),
                 covers: Mutex::new(HashMap::new()),
+                prev_size: Mutex::new(None),
             });
             setup_tray(app)?;
             Ok(())
@@ -651,16 +800,17 @@ fn main() {
         .on_window_event(|window, event| {
             // 关闭窗口 → 默认隐藏到托盘（设置里可关闭此行为）
             if let WindowEvent::CloseRequested { api, .. } = event {
-                let to_tray = window
-                    .state::<AppState>()
-                    .data
-                    .lock()
-                    .unwrap()
-                    .settings
-                    .get("closeToTray")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
-                if to_tray {
+                let (asked, to_tray) = {
+                    let st = window.state::<AppState>();
+                    let d = st.data.lock().unwrap();
+                    let get = |k: &str| d.settings.get(k).and_then(|v| v.as_bool());
+                    (get("closeHintShown").unwrap_or(false), get("closeToTray").unwrap_or(true))
+                };
+                if !asked {
+                    // 第一次关闭：交给前端弹出选择框
+                    api.prevent_close();
+                    let _ = window.emit("close-requested", ());
+                } else if to_tray {
                     api.prevent_close();
                     let _ = window.hide();
                 }
@@ -680,7 +830,8 @@ fn main() {
             set_tray_tooltip,
             app_exit,
             update_check,
-            update_install
+            update_install,
+            set_mini
         ])
         .run(tauri::generate_context!())
         .expect("Pulse 启动失败");

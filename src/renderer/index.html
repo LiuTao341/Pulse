@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; media-src 'self' asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost" />
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; media-src 'self' media: http://media.localhost asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost" />
   <title>Pulse</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -77,9 +77,12 @@
     </div>
     <div class="p-right">
       <span class="time" id="time"><b>0:00</b> / 0:00</span>
+      <button class="icon-btn" id="btn-soft" title="耳机柔和模式" data-icon="headphones"></button>
+      <button class="icon-btn" id="btn-mini" title="迷你播放器" data-icon="mini"></button>
       <button class="icon-btn" id="btn-queue" title="播放队列" data-icon="queue"></button>
       <button class="icon-btn" id="btn-mute" title="静音" data-icon="volume"></button>
       <input type="range" id="vol" min="0" max="100" step="1" />
+      <button class="icon-btn" id="btn-expand" title="恢复完整窗口" data-icon="expand"></button>
     </div>
   </footer>
 </div>

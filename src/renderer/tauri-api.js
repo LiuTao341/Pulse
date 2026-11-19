@@ -5,8 +5,9 @@
   if (!T) return; // 浏览器预览时由 preview/mock-api.js 提供 api
   const { invoke, convertFileSrc } = T.core;
   const win = T.window.getCurrentWindow();
+  // url：自带 CORS 的本地音频协议（可接入 Web Audio）；altUrl：Tauri 内置资源协议，作为兜底
   const withUrls = (tracks) => {
-    if (tracks) for (const t of tracks) t.url = convertFileSrc(t.path);
+    if (tracks) for (const t of tracks) { t.url = convertFileSrc(t.path, 'media'); t.altUrl = convertFileSrc(t.path); }
     return tracks;
   };
 
@@ -19,6 +20,8 @@
       minimize: () => win.minimize(),
       toggleMax: () => win.toggleMaximize(),
       close: () => win.close(), // 是否缩到托盘由后端根据设置决定
+      hide: () => win.hide(),
+      setMini: (on) => invoke('set_mini', { on }),
       exit: () => invoke('app_exit'),
 
       getLibrary: async () => {
@@ -48,6 +51,7 @@
       on: (ch, fn) => {
         if (ch === 'scan:progress') T.event.listen('scan-progress', (e) => fn(e.payload));
         else if (ch === 'tray') T.event.listen('tray-action', (e) => fn(e.payload));
+        else if (ch === 'close') T.event.listen('close-requested', () => fn());
         else if (ch === 'update:progress') T.event.listen('update-progress', (e) => fn(e.payload));
         else if (ch === 'win:state') {
           const upd = async () => fn({ maximized: await win.isMaximized() });
