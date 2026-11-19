@@ -276,6 +276,10 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px;
 .folder-row .icon-btn { opacity: 0; }
 .folder-row:hover .icon-btn { opacity: 1; }
 .opt { display: flex; align-items: center; gap: 14px; margin: 14px 0; cursor: pointer; }
+.opt-range { display: flex; align-items: center; gap: 16px; margin: 12px 0; }
+.opt-range input { width: 240px; }
+.opt-range b { font-weight: 400; color: var(--text-2); min-width: 130px; }
+.muted.small { font-size: 12px; line-height: 1.7; max-width: 640px; }
 .row-actions { display: flex; align-items: center; gap: 14px; }
 .stats { margin-top: 28px; color: var(--text-3); font-size: 13px; }
 .swatches { display: flex; gap: 12px; margin-top: 12px; }

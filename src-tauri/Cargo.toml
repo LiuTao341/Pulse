@@ -1,0 +1,28 @@
+[package]
+name = "pulse"
+version = "0.2.0"
+description = "Pulse 本地音乐播放器"
+authors = ["LiuTao341"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+lofty = "0.21"
+walkdir = "2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+base64 = "0.22"
+encoding_rs = "0.8"
+
+# 体积优先
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

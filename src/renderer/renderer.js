@@ -335,6 +335,13 @@ function viewSettings() {
       <h3>主题色</h3><div class="swatches">${ACCENTS.map((c) => `<button class="sw${c === S.settings.accent ? ' on' : ''}" data-c="${c}" style="background:${c}"></button>`).join('')}</div>`;
   } else if (tab === 'playback') {
     html = `<h2>播放</h2>
+      <h3>歌曲切换</h3>
+      <div class="opt-range"><span>淡入淡出</span>
+        <input type="range" id="opt-xfade" min="0" max="12" step="1" value="${crossfadeSec()}" style="--p:${(crossfadeSec() / 12) * 100}%">
+        <b id="xfade-val">${xfadeLabel(crossfadeSec())}</b></div>
+      <p class="muted small">设为 0 时为无缝衔接：下一首会提前加载，并在当前歌曲结束的瞬间接上，适合现场专辑、古典、DJ 混音等连续曲目。<br>大于 0 时，两首歌会在结尾交叉渐变。手动切歌总是立即切换。</p>
+      <h3>其他</h3>
+      <label class="opt"><input type="checkbox" id="opt-tray"${S.settings.closeToTray !== false ? ' checked' : ''}>关闭窗口时最小化到系统托盘（右键托盘图标可退出）</label>
       <label class="opt"><input type="checkbox" id="opt-restore"${S.settings.restoreSession !== false ? ' checked' : ''}>启动时恢复上次的播放队列和进度</label>
       <h3>快捷键</h3><table class="kbd">
         <tr><td><kbd>Space</kbd></td><td>播放 / 暂停</td></tr>
@@ -370,6 +377,14 @@ function viewSettings() {
     v.querySelectorAll('.sw').forEach((b) => (b.onclick = () => { setAccent(b.dataset.c); persist.settings(); viewSettings(); }));
   } else if (tab === 'playback') {
     $('#opt-restore').onchange = (e) => { S.settings.restoreSession = e.target.checked; persist.settings(); };
+    $('#opt-tray').onchange = (e) => { S.settings.closeToTray = e.target.checked; persist.settings(); };
+    $('#opt-xfade').oninput = (e) => {
+      const v = +e.target.value;
+      S.settings.crossfade = v;
+      e.target.style.setProperty('--p', (v / 12) * 100 + '%');
+      $('#xfade-val').textContent = xfadeLabel(v);
+      saveSettingsSoon();
+    };
   } else {
     $('#bl-clear').onclick = async () => {
       if (!(await askConfirm('清空黑名单？'))) return;
@@ -380,6 +395,7 @@ function viewSettings() {
     }));
   }
 }
+const xfadeLabel = (v) => (v ? `${v} 秒` : '关闭（无缝衔接）');
 function setAccent(c) {
   S.settings.accent = c;
   document.documentElement.style.setProperty('--accent', c);
@@ -504,15 +520,118 @@ const coverObs = new IntersectionObserver((entries) => {
 }, { rootMargin: '300px' });
 const observeCovers = (root) => root.querySelectorAll('img[data-cover]').forEach((i) => coverObs.observe(i));
 
-// ═════════════════════════ 播放器 ═════════════════════════
-const audio = new Audio();
-audio.preload = 'auto';
+// ═════════════════════════ 播放引擎 ═════════════════════════
+// 两个 <audio> 交替使用：当前曲目播放时，另一个预加载下一首。
+// 快结束时提前启动下一首：淡入淡出为 0 时做无缝衔接，大于 0 时做等功率交叉渐变。
+const decks = [new Audio(), new Audio()];
+decks.forEach((d) => { d.preload = 'auto'; d._fade = 1; d._id = null; d._ramp = null; });
+let audio = decks[0];                       // 当前（正在播放的）deck
+const otherDeck = () => (audio === decks[0] ? decks[1] : decks[0]);
+const Vol = { pos: 0.8, muted: false };
+// 对数音量：滑块位置 p → 增益 p³（约 60 dB 动态范围，听感上均匀变化）
+const gainOf = (p) => Math.pow(Math.min(1, Math.max(0, p)), 3);
+const applyGain = (d) => { d.volume = Vol.muted ? 0 : Math.min(1, Math.max(0, gainOf(Vol.pos) * d._fade)); };
+const crossfadeSec = () => Math.max(0, Math.min(12, +S.settings.crossfade || 0));
+let transitioning = false;
+
+function ramp(d, to, ms, done) {
+  clearInterval(d._ramp);
+  const from = d._fade, t0 = performance.now();
+  const step = () => {
+    const k = ms > 0 ? Math.min(1, (performance.now() - t0) / ms) : 1;
+    // 等功率曲线：淡入 sin、淡出 cos，交叉时总响度不塌陷
+    const e = to > from ? Math.sin((k * Math.PI) / 2) : 1 - Math.cos((k * Math.PI) / 2);
+    d._fade = from + (to - from) * e;
+    applyGain(d);
+    if (k >= 1) { clearInterval(d._ramp); d._ramp = null; if (done) done(); }
+  };
+  d._ramp = setInterval(step, 25);
+  step();
+}
+function stopDeck(d) {
+  clearInterval(d._ramp);
+  d._ramp = null;
+  d.pause();
+  d._fade = 1;
+  applyGain(d);
+}
+/** 立即结束正在进行的过渡（暂停、跳转、手动切歌时调用） */
+function finishTransition() {
+  const o = otherDeck();
+  if (transitioning || !o.paused) { stopDeck(o); o._id = null; }
+  clearInterval(audio._ramp);
+  audio._ramp = null;
+  audio._fade = 1;
+  applyGain(audio);
+  transitioning = false;
+}
+
 const P = { base: [], queue: [], pos: -1, repeat: 'off', shuffle: false, current: null };
 const playable = (id) => S.byId.has(id) && !isBlack(S.byId.get(id));
 function findPlayable(from, dir) {
   for (let i = from; i >= 0 && i < P.queue.length; i += dir) if (playable(P.queue[i])) return i;
   return -1;
 }
+function upcomingIndex() {
+  if (P.repeat === 'one') return -1;
+  let i = findPlayable(P.pos + 1, 1);
+  if (i < 0 && P.repeat === 'all') i = findPlayable(0, 1);
+  return i;
+}
+/** 让空闲的 deck 预加载下一首 */
+function preloadNext() {
+  const nx = otherDeck();
+  if (transitioning || !nx.paused) return;
+  const i = upcomingIndex();
+  const id = i >= 0 ? P.queue[i] : null;
+  if (!id || nx._id === id) return;
+  nx._id = id;
+  nx.src = S.byId.get(id).url;
+  nx.load();
+}
+function setCurrent(i, t, counted) {
+  P.pos = i;
+  P.current = t;
+  if (counted) { api.played(t.id); t.playCount = (t.playCount || 0) + 1; }
+  updateNowPlaying(t);
+  updatePlayState();
+  renderQueue();
+}
+/** 自动过渡到第 i 首（由结尾监视器触发） */
+function transitionTo(i, fadeMs) {
+  const t = S.byId.get(P.queue[i]);
+  if (!t) return;
+  transitioning = true;
+  const old = audio, nx = otherDeck();
+  if (nx._id !== t.id) { nx._id = t.id; nx.src = t.url; } else if (nx.currentTime) nx.currentTime = 0;
+  nx.loop = P.repeat === 'one';
+  nx._fade = fadeMs > 0 ? 0 : 1;
+  applyGain(nx);
+  audio = nx;
+  nx.play().catch(() => {});
+  setCurrent(i, t, true);
+  const fin = () => {
+    if (old === audio) return;        // 期间用户手动切了歌
+    stopDeck(old);
+    old._id = null;
+    transitioning = false;
+    preloadNext();
+  };
+  if (fadeMs > 0) { ramp(nx, 1, fadeMs); ramp(old, 0, fadeMs, fin); }
+  else setTimeout(fin, 400);           // 无缝：旧曲剩下的几十毫秒自然播完
+}
+// 结尾监视器：快结束时提前启动下一首
+setInterval(() => {
+  if (transitioning || audio.paused || audio.loop || !P.current) return;
+  const d = audio.duration;
+  if (!isFinite(d) || d <= 1) return;
+  const left = d - audio.currentTime;
+  const X = crossfadeSec();
+  const lead = X > 0 ? Math.min(X, d / 3) : 0.05;
+  if (left > lead) return;
+  const i = upcomingIndex();
+  if (i >= 0) transitionTo(i, X > 0 ? left * 1000 : 0);
+}, 20);
 
 function playList(tracks, start = 0, forceShuffle = false) {
   if (!tracks.length) return;
@@ -536,25 +655,34 @@ function playList(tracks, start = 0, forceShuffle = false) {
   if (i < 0) { toast('列表中的歌曲都在黑名单中'); return; }
   loadAt(i);
 }
+/** 手动切到第 i 首（立即切换，不做渐变） */
 function loadAt(i, { autoplay = true, time = 0 } = {}) {
   const t = S.byId.get(P.queue[i]);
   if (!t) return;
-  P.pos = i;
-  P.current = t;
-  audio.src = t.url;
-  if (time) audio.addEventListener('loadedmetadata', () => { audio.currentTime = time; }, { once: true });
-  if (autoplay) {
-    audio.play().catch(() => {});
-    api.played(t.id);
-    t.playCount = (t.playCount || 0) + 1;
+  const cur = audio, o = otherDeck();
+  clearInterval(cur._ramp); clearInterval(o._ramp);
+  transitioning = false;
+  let d;
+  if (o._id === t.id && o.readyState >= 2) {   // 已经预加载好了，直接用
+    cur.pause(); cur._id = null; d = o;
+    if (o.currentTime) o.currentTime = 0;
+  } else {
+    o.pause(); d = cur; d._id = t.id; d.src = t.url;
   }
-  updateNowPlaying(t);
-  S.redraw?.();
-  renderQueue();
+  cur._fade = o._fade = 1;
+  applyGain(cur); applyGain(o);
+  audio = d;
+  d.loop = P.repeat === 'one';
+  if (time) {
+    if (d.readyState >= 1) d.currentTime = time;
+    else d.addEventListener('loadedmetadata', () => { d.currentTime = time; }, { once: true });
+  }
+  if (autoplay) d.play().catch(() => {});
+  setCurrent(i, t, autoplay);
+  preloadNext();
 }
 function next(auto = false) {
   if (!P.queue.length) return;
-  if (auto && P.repeat === 'one') { audio.currentTime = 0; audio.play(); return; }
   let i = findPlayable(P.pos + 1, 1);
   if (i < 0 && P.repeat === 'all') i = findPlayable(0, 1);
   if (i < 0) {
@@ -564,7 +692,7 @@ function next(auto = false) {
   loadAt(i);
 }
 function prev() {
-  if (audio.currentTime > 3 || !P.queue.length) { audio.currentTime = 0; return; }
+  if (audio.currentTime > 3 || !P.queue.length) { finishTransition(); audio.currentTime = 0; return; }
   let i = findPlayable(P.pos - 1, -1);
   if (i < 0 && P.repeat === 'all') i = findPlayable(P.queue.length - 1, -1);
   if (i < 0) { audio.currentTime = 0; return; }
@@ -576,13 +704,19 @@ function togglePlay() {
     if (list.length) playList(list, 0);
     return;
   }
-  audio.paused ? audio.play() : audio.pause();
+  if (audio.paused) audio.play().catch(() => {});
+  else { finishTransition(); audio.pause(); }
+}
+function seekTo(sec) {
+  finishTransition();
+  audio.currentTime = sec;
 }
 function playNext(t) {
   if (!P.current) return playList([t], 0);
   P.queue.splice(P.pos + 1, 0, t.id);
   P.base.splice(P.base.indexOf(P.current.id) + 1, 0, t.id);
   renderQueue();
+  preloadNext();
   toast('将在下一首播放');
 }
 function enqueue(t) {
@@ -590,6 +724,7 @@ function enqueue(t) {
   P.queue.push(t.id);
   P.base.push(t.id);
   renderQueue();
+  preloadNext();
   toast('已添加到播放队列');
 }
 function removeFromQueue(i) {
@@ -599,6 +734,7 @@ function removeFromQueue(i) {
   if (bi >= 0) P.base.splice(bi, 1);
   if (i < P.pos) P.pos--;
   renderQueue();
+  preloadNext();
 }
 function toggleShuffle() {
   P.shuffle = !P.shuffle;
@@ -616,12 +752,15 @@ function toggleShuffle() {
   }
   updateModeBtns();
   renderQueue();
+  preloadNext();
   saveSettingsSoon();
 }
 function cycleRepeat() {
   P.repeat = { off: 'all', all: 'one', one: 'off' }[P.repeat];
   S.settings.repeat = P.repeat;
+  audio.loop = P.repeat === 'one';
   updateModeBtns();
+  preloadNext();
   saveSettingsSoon();
 }
 function updateModeBtns() {
@@ -631,19 +770,30 @@ function updateModeBtns() {
   r.title = { off: '循环：关', all: '循环：列表', one: '循环：单曲' }[P.repeat];
   $('#btn-shuffle').classList.toggle('on', P.shuffle);
 }
-function setVolume(v) {
-  v = Math.min(1, Math.max(0, v));
-  audio.volume = v;
-  audio.muted = false;
-  S.settings.volume = v;
-  $('#vol').value = Math.round(v * 100);
+function setVolume(p) {
+  Vol.pos = Math.min(1, Math.max(0, p));
+  Vol.muted = false;
+  decks.forEach(applyGain);
+  S.settings.volume = Vol.pos;
+  $('#vol').value = Math.round(Vol.pos * 100);
   updateVolUi();
   saveSettingsSoon();
 }
+function toggleMute() {
+  Vol.muted = !Vol.muted;
+  decks.forEach(applyGain);
+  updateVolUi();
+}
 function updateVolUi() {
   const vol = $('#vol');
-  vol.style.setProperty('--p', (audio.muted ? 0 : vol.value) + '%');
-  $('#btn-mute').innerHTML = icon(audio.muted || audio.volume === 0 ? 'mute' : 'volume');
+  vol.style.setProperty('--p', (Vol.muted ? 0 : vol.value) + '%');
+  vol.title = Vol.muted ? '已静音' : `${vol.value}%（${Vol.pos > 0 ? (60 * Math.log10(Vol.pos)).toFixed(0) : '-∞'} dB）`;
+  $('#btn-mute').innerHTML = icon(Vol.muted || Vol.pos === 0 ? 'mute' : 'volume');
+}
+function updatePlayState() {
+  $('#btn-play').innerHTML = icon(audio.paused ? 'play' : 'pause');
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = audio.paused ? 'paused' : 'playing';
+  S.redraw?.();
 }
 
 // —— 播放栏 / 正在播放 ——
@@ -653,6 +803,7 @@ function updateNowPlaying(t) {
   $('#npo-title').textContent = t.title;
   $('#npo-sub').textContent = `${artistOf(t)} · ${t.album}`;
   document.title = `${t.title} - ${artistOf(t)}`;
+  api.setTrayTooltip && api.setTrayTooltip(`${t.title} - ${artistOf(t)}`.slice(0, 120));
   const small = $('#np-img'), big = $('#npo-img');
   small.classList.remove('ok');
   big.classList.remove('ok');
@@ -757,6 +908,12 @@ function bind() {
   $('#win-close').onclick = () => { saveSession(); api.close(); };
   api.on('win:state', ({ maximized }) => ($('#win-max').innerHTML = icon(maximized ? 'restore' : 'max')));
   api.on('scan:progress', ({ done, total }) => ($('#scan-ind').textContent = `正在扫描 ${done}/${total}`));
+  api.on('tray', async (action) => {
+    if (action === 'toggle') togglePlay();
+    else if (action === 'next') next();
+    else if (action === 'prev') prev();
+    else if (action === 'quit') { saveSession(); await new Promise((r) => setTimeout(r, 150)); api.exit && api.exit(); }
+  });
 
   const onSearch = debounce(() => {
     const q = $('#search').value.trim();
@@ -783,7 +940,7 @@ function bind() {
   $('#btn-prev').onclick = prev;
   $('#btn-shuffle').onclick = toggleShuffle;
   $('#btn-repeat').onclick = cycleRepeat;
-  $('#btn-mute').onclick = () => { audio.muted = !audio.muted; updateVolUi(); };
+  $('#btn-mute').onclick = toggleMute;
   $('#vol').oninput = (e) => setVolume(e.target.value / 100);
   $('#btn-queue').onclick = () => { $('#btn-queue').classList.toggle('on', $('#queue').classList.toggle('open')); renderQueue(); };
   $('#queue-close').onclick = () => { $('#queue').classList.remove('open'); $('#btn-queue').classList.remove('on'); };
@@ -797,7 +954,7 @@ function bind() {
   $('#npo-close').onclick = () => $('#npo').classList.remove('open');
   $('#lyrics').onclick = (e) => {
     const p = e.target.closest('p[data-i]');
-    if (p && LRC[+p.dataset.i]) audio.currentTime = LRC[+p.dataset.i].t;
+    if (p && LRC[+p.dataset.i]) seekTo(LRC[+p.dataset.i].t);
   };
 
   // 进度条
@@ -807,30 +964,26 @@ function bind() {
   const setFill = (r) => ($('#seek-fill').style.width = r * 100 + '%');
   seek.onpointerdown = (e) => { if (!audio.duration) return; seeking = true; seek.setPointerCapture(e.pointerId); setFill(ratio(e)); };
   seek.onpointermove = (e) => { if (seeking) setFill(ratio(e)); else seek.title = fmtTime(ratio(e) * (audio.duration || 0)); };
-  seek.onpointerup = (e) => { if (!seeking) return; seeking = false; audio.currentTime = ratio(e) * audio.duration; };
+  seek.onpointerup = (e) => { if (!seeking) return; seeking = false; seekTo(ratio(e) * audio.duration); };
 
-  // audio 事件
-  audio.addEventListener('timeupdate', () => {
+  // audio 事件（两个 deck 都监听，只处理当前 deck 的）
+  const on = (type, fn) => decks.forEach((d) => d.addEventListener(type, (e) => { if (e.target === audio) fn(e); }));
+  on('timeupdate', () => {
     const d = audio.duration || (P.current && P.current.duration) || 0;
     if (!seeking) setFill(d ? audio.currentTime / d : 0);
     $('#time').innerHTML = `<b>${fmtTime(audio.currentTime)}</b> / ${fmtTime(d)}`;
     syncLyrics(audio.currentTime);
   });
-  audio.addEventListener('loadedmetadata', () => {
+  on('loadedmetadata', () => {
     if (P.current && !P.current.duration) P.current.duration = audio.duration;
   });
-  const onPlayState = () => {
-    $('#btn-play').innerHTML = icon(audio.paused ? 'play' : 'pause');
-    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = audio.paused ? 'paused' : 'playing';
-    S.redraw?.();
-  };
-  audio.addEventListener('play', onPlayState);
-  audio.addEventListener('pause', onPlayState);
-  audio.addEventListener('ended', () => next(true));
+  on('play', updatePlayState);
+  on('pause', updatePlayState);
+  on('ended', () => next(true));
   let errors = 0;
-  audio.addEventListener('playing', () => (errors = 0));
-  audio.addEventListener('error', () => {
-    if (!P.current || !audio.src) return;
+  on('playing', () => (errors = 0));
+  on('error', () => {
+    if (!P.current || !audio.getAttribute('src')) return;
     toast(`无法播放：${P.current.title}`);
     if (++errors < 5) {
       const i = findPlayable(P.pos + 1, 1);
@@ -841,11 +994,11 @@ function bind() {
   // 系统媒体键
   if ('mediaSession' in navigator) {
     const ms = navigator.mediaSession;
-    ms.setActionHandler('play', () => audio.play());
-    ms.setActionHandler('pause', () => audio.pause());
+    ms.setActionHandler('play', () => audio.paused && togglePlay());
+    ms.setActionHandler('pause', () => !audio.paused && togglePlay());
     ms.setActionHandler('previoustrack', prev);
     ms.setActionHandler('nexttrack', () => next());
-    ms.setActionHandler('seekto', (d) => (audio.currentTime = d.seekTime));
+    ms.setActionHandler('seekto', (d) => seekTo(d.seekTime));
   }
 
   // 全局
@@ -871,8 +1024,8 @@ function bind() {
     if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
     else if (e.ctrlKey && e.key === 'ArrowRight') next();
     else if (e.ctrlKey && e.key === 'ArrowLeft') prev();
-    else if (e.ctrlKey && e.key === 'ArrowUp') { e.preventDefault(); setVolume(audio.volume + 0.05); }
-    else if (e.ctrlKey && e.key === 'ArrowDown') { e.preventDefault(); setVolume(audio.volume - 0.05); }
+    else if (e.ctrlKey && e.key === 'ArrowUp') { e.preventDefault(); setVolume(Vol.pos + 0.05); }
+    else if (e.ctrlKey && e.key === 'ArrowDown') { e.preventDefault(); setVolume(Vol.pos - 0.05); }
   });
 }
 
@@ -883,8 +1036,9 @@ async function init() {
   setAccent(S.settings.accent || '#e53935');
   P.repeat = S.settings.repeat || 'off';
   P.shuffle = !!S.settings.shuffle;
-  audio.volume = S.settings.volume ?? 0.8;
-  $('#vol').value = Math.round(audio.volume * 100);
+  Vol.pos = S.settings.volume ?? 0.8;
+  decks.forEach(applyGain);
+  $('#vol').value = Math.round(Vol.pos * 100);
   updateVolUi();
   updateModeBtns();
   render();

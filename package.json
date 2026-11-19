@@ -1,46 +1,14 @@
 {
   "name": "pulse-player",
   "productName": "Pulse",
-  "version": "0.1.3",
-  "description": "参考 Dopamine 的本地音乐播放器（Electron）",
-  "main": "src/main/main.js",
+  "version": "0.2.0",
+  "description": "参考 Dopamine 的本地音乐播放器（Tauri 2）",
   "scripts": {
-    "start": "electron .",
-    "dist": "electron-builder --win portable nsis --publish never"
-  },
-  "dependencies": {
-    "music-metadata": "^7.14.0"
+    "dev": "tauri dev",
+    "build": "tauri build"
   },
   "devDependencies": {
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
-  },
-  "build": {
-    "appId": "app.pulse.player",
-    "productName": "Pulse",
-    "directories": {
-      "output": "release",
-      "buildResources": "build"
-    },
-    "files": [
-      "src/**/*",
-      "package.json"
-    ],
-    "win": {
-      "target": [
-        "portable",
-        "nsis"
-      ],
-      "icon": "build/icon.png"
-    },
-    "portable": {
-      "artifactName": "Pulse-${version}-portable.exe"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "artifactName": "Pulse-${version}-setup.exe"
-    }
+    "@tauri-apps/cli": "^2.1.0"
   },
   "author": "LiuTao341",
   "repository": "https://github.com/LiuTao341/Pulse"

@@ -1,17 +1,19 @@
-# Pulse · 本地音乐播放器（Electron）
+# Pulse · 本地音乐播放器（Tauri 2）
 
-参考 [Dopamine](https://github.com/digimezzo/dopamine) 的交互与视觉，用 Electron + 原生 JS 实现（不依赖前端框架，无需构建）。
+参考 [Dopamine](https://github.com/digimezzo/dopamine) 的交互与视觉。界面是原生 HTML/CSS/JS（无框架、无需前端构建），后端用 Rust + Tauri 2，exe 只有几 MB（Electron 版约 75 MB）。
 
 ## 运行
 
+需要 Node.js 和 [Rust](https://rustup.rs)。
+
 ```bash
 npm install
-npm start          # 开发运行
-npm run dist       # 打包 Windows 安装包（electron-builder）
+npm run dev        # 开发运行
+npm run build      # 打包（exe 在 src-tauri/target/release/）
 ```
 
-> 依赖：`electron`、`music-metadata@7`（读取标签 / 封面 / 内嵌歌词）。
-> 若未安装 music-metadata，程序仍能运行，但只能从文件名（`歌手 - 歌名.mp3`）解析信息。
+> Rust 依赖：`lofty`（标签/封面/内嵌歌词）、`image`（封面缩略图）、`encoding_rs`（GBK 歌词）、`walkdir`、`tauri-plugin-dialog`。
+> 运行需要 WebView2，Windows 10/11 一般已自带。
 
 ## 下载 exe
 
@@ -34,22 +36,24 @@ npm run dist       # 打包 Windows 安装包（electron-builder）
 - 黑名单：加入/移出/清空，播放时自动跳过
 - 正在播放页：模糊封面背景 + 大封面 + 滚动歌词（同名 .lrc 或内嵌歌词，支持 GBK，点击跳转）
 - 封面：内嵌封面优先，回退到目录下的 cover/folder.jpg；主进程缩放后缓存
+- 无缝播放 / 交叉淡入淡出（0–12 秒可调），对数音量
+- 关闭窗口缩到系统托盘（托盘菜单：播放/暂停、上一首、下一首、退出）
 - 系统媒体键 / Windows 媒体浮层（MediaSession）
 - 记忆：音量、循环/随机模式、主题色、上次播放队列和进度、播放次数
-- 无边框窗口 + 自绘标题栏、单实例运行、快捷键
+- 无边框窗口 + 自绘标题栏、快捷键
 
 ## 目录结构
 
 ```
-src/
-  main/
-    main.js       主进程：窗口、扫描、元数据、封面、歌词、IPC
-    preload.js    contextBridge 暴露的安全 API（window.api）
-    store.js      JSON 持久化（userData/library.json）
-  renderer/
-    index.html    界面骨架
-    styles.css    设计令牌 + 全部样式
-    renderer.js   状态、视图、虚拟列表、播放器
+src-tauri/
+  src/main.rs     后端：扫描、标签、封面、歌词、持久化、托盘、关闭到托盘
+  tauri.conf.json 窗口 / 资源协议 / 打包配置
+  capabilities/   前端可用权限
+src/renderer/
+  index.html      界面骨架
+  styles.css      设计令牌 + 全部样式
+  tauri-api.js    把 Rust 命令包装成 window.api
+  renderer.js     状态、视图、虚拟列表、播放引擎
 preview/          浏览器预览（模拟 window.api）
 docs/
   UI_DESIGN.md    UI 方案
@@ -58,4 +62,4 @@ docs/
 
 ## 数据存放
 
-`%APPDATA%/pulse-player/library.json`（Windows）。删除该文件即可重置。
+`%APPDATA%\app.pulse.player\library.json`。首次启动会自动导入 Electron 版的文件夹、黑名单和设置。删除该文件即可重置。
